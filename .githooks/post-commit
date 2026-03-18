@@ -1,0 +1,7 @@
+#!/bin/sh
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null)
+if [ -z "$branch" ]; then
+  exit 0
+fi
+
+git push origin "$branch"

@@ -94,3 +94,9 @@ Frontend URL: `http://localhost:5173`
 
 See DEPLOY.md for free-hosting options and the current persistence limitation around local JSON and uploads.
 
+
+
+## Render + Vercel
+
+This repo now includes Render and Vercel deployment config. See DEPLOY.md for the exact setup.
+

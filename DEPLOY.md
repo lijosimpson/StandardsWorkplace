@@ -1,6 +1,6 @@
 # Free Web Hosting
 
-This app can be hosted for free on the web as a demo.
+This app can be hosted on the web as a demo using Vercel for the frontend and Render for the backend.
 
 ## Important limitation
 
@@ -9,100 +9,88 @@ The current backend stores data in these local paths:
 - backend/data/store.json
 - backend/uploads/
 
-On most free web hosts, local disk is ephemeral or reset on redeploy. That means:
+On most low-cost or free-style hosts, local disk is ephemeral or reset on redeploy. That means:
 
 - uploaded files can disappear
 - app data can reset
 - this is acceptable for a demo, not for durable production use
 
-## Easiest free setup
+## Render + Vercel
 
-### Frontend
+This repo is now prepared for that setup.
 
-Host the Vite frontend on one of these:
+Files added for deployment:
 
-- Cloudflare Pages
-- Netlify
-- Vercel
-- GitHub Pages
+- render.yaml
+- backend/.env.example
+- frontend/vercel.json
+- frontend/.env.example
 
-Build settings:
+### 1. Deploy backend to Render
 
-- Root directory: frontend
-- Build command: npm run build
-- Output directory: dist
+1. In Render, create a new Web Service from this GitHub repo.
+2. Render can read render.yaml automatically.
+3. If Render asks for settings, use:
+   - Root Directory: backend
+   - Build Command: npm install && npm run build
+   - Start Command: npm run start
+   - Health Check Path: /api/health
+4. Set environment variable:
+   - CORS_ORIGIN=https://YOUR-VERCEL-URL.vercel.app
+5. Deploy and copy the backend URL.
 
-Required environment variable:
+Expected backend example:
 
-- VITE_API_BASE=https://YOUR-BACKEND-URL/api
+- https://standardsworkplace-api.onrender.com
 
-### Backend
+### 2. Deploy frontend to Vercel
 
-Host the Node backend on one of these:
+1. Import the same GitHub repo into Vercel.
+2. Set Root Directory to frontend.
+3. Vercel can use frontend/vercel.json automatically.
+4. Add environment variable:
+   - VITE_API_BASE=https://YOUR-RENDER-URL.onrender.com/api
+5. Deploy.
 
-- Render
-- Railway
-- Koyeb
-- Northflank
+Expected frontend example:
 
-Backend settings:
+- https://standards-workplace.vercel.app
 
-- Root directory: backend
-- Build command: npm install && npm run build
-- Start command: npm run start
-- Port: use the platform PORT environment variable
+### 3. Smoke test
 
-The backend already supports PORT and serves uploads from /uploads.
+- Open the frontend URL
+- Confirm standards load
+- Confirm the browser shows no localhost API calls
+- Confirm backend health works at /api/health
 
-## Recommended demo deployment flow
+## Automatic GitHub uploads
 
-1. Push this repo to GitHub.
-2. Deploy backend first.
-3. Copy the backend public URL.
-4. Deploy frontend with VITE_API_BASE pointing to that backend URL plus /api.
-5. Open the frontend URL and test the health-driven API flow.
+I also configured a local git post-commit hook path for this repo.
 
-Example:
+What it does:
 
-- Backend URL: https://my-coc-backend.onrender.com
-- Frontend env: VITE_API_BASE=https://my-coc-backend.onrender.com/api
+- after each local git commit, git automatically runs git push origin <current-branch>
 
-## What I already changed in code
+What it does not do:
 
-The frontend API base is no longer hardcoded to localhost. It now reads:
+- it does not auto-commit file edits
+- you still need to create a commit
 
-- VITE_API_BASE
+That is the safe boundary. Auto-committing every file save would be noisy and risky.
 
-with a local fallback of:
+## Local hook activation in this repo
 
-- http://localhost:4000/api
+Run once if needed:
 
-## If you want durable free hosting
+- git config core.hooksPath .githooks
 
-You should replace local file persistence with managed services:
+The repo includes:
 
-- database: Supabase Postgres or Neon Postgres
+- .githooks/post-commit
+
+## If you want durable hosting later
+
+You said we will do this later. The right next upgrade is:
+
+- database: Supabase Postgres or Neon
 - file storage: Supabase Storage or Cloudflare R2
-
-A solid free-stack target would be:
-
-- frontend: Cloudflare Pages or Vercel
-- backend: Render or Railway
-- database: Supabase
-- file storage: Supabase Storage
-
-## Quick smoke test after deploy
-
-- Frontend loads without localhost errors
-- GET /api/health works on the backend
-- standards list loads
-- uploads and saved data work for the current session
-
-## Best next step
-
-If you want, I can do the next deployment step for you by preparing this repo for one specific host:
-
-1. Render + Vercel
-2. Render only
-3. Netlify + Railway
-4. Cloudflare Pages + Render

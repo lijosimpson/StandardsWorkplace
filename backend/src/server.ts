@@ -253,6 +253,8 @@ const normalizeAccreditationFramework = (value: unknown): AccreditationFramework
   }
 };
 
+const allowedCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((entry) => entry.trim()).filter(Boolean);
+
 const dataDir = path.resolve(__dirname, "..", "data");
 const uploadsDir = path.resolve(__dirname, "..", "uploads");
 const dataFile = path.resolve(dataDir, "store.json");
@@ -287,7 +289,7 @@ const upload = multer({
   }
 });
 
-app.use(cors());
+app.use(cors(allowedCorsOrigins.length === 0 ? undefined : { origin: allowedCorsOrigins }));
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
 
@@ -2128,6 +2130,7 @@ app.delete("/api/hospitals/:hospitalId/quality-reference-docs/:docId", (req: Req
 app.listen(port, () => {
   console.log(`CoC backend listening on port ${port}`);
 });
+
 
 
 
