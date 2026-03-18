@@ -1,0 +1,40 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd C:\\\\Users\\\\lijos\\\\OneDrive\\\\Desktop\\\\COC; node -v$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "npm init": true,
+        "npm install": true,
+        "npx tsc": true,
+        "mkdir": true,
+        "Set-Content": true,
+        "pip": true,
+        "/^pip install pdfminer\\.six; python -c \"from pdfminer\\.high_level import extract_text; text = extract_text\\('c:/Users/lijos/OneDrive/Desktop/COC/Optimal_Resources_for_Cancer_Care\\.pdf'\\); print\\(text\\[:8000\\]\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python -m pip install pdfminer\\.six$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cmd /c python -m pip install pdfminer\\.six$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "npm run build": true,
+        "Test-Path": true,
+        "New-Item": true,
+        "Out-Null": true,
+        "/^cd C:\\\\Users\\\\lijos\\\\OneDrive\\\\Desktop\\\\COC\\\\backend; npm run dev$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "apply_patch": true,
+        "/^node -e \"const \\{ chromium \\} = require\\('playwright'\\); \\(async\\(\\)=>\\{ const browser = await chromium\\.launch\\(\\{ headless: true \\}\\); const page = await browser\\.newPage\\(\\); await page\\.goto\\('http://localhost:5173', \\{ waitUntil: 'domcontentloaded', timeout: 30000 \\}\\); await page\\.getByRole\\('heading', \\{ name: 'CoC Standards Workspace' \\}\\)\\.waitFor\\(\\{ timeout: 15000 \\}\\); const before = await page\\.locator\\('\\.metric-edit-row'\\)\\.count\\(\\); await page\\.getByRole\\('button', \\{ name: 'Add Tracking Line' \\}\\)\\.click\\(\\{ timeout: 5000 \\}\\); const after = await page\\.locator\\('\\.metric-edit-row'\\)\\.count\\(\\); console\\.log\\('tracking-line-count', before, after\\); await browser\\.close\\(\\); \\}\\)\\(\\)\\.catch\\(err=>\\{ console\\.error\\(err\\); process\\.exit\\(1\\); \\}\\);\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "git ls-remote": true
+    }
+}

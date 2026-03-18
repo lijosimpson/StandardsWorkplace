@@ -1,0 +1,36 @@
+:root {
+  --ol-navy-900: #0b1f3b;
+  --ol-navy-700: #15345d;
+  --ol-teal-500: #09b4b0;
+  --ol-teal-600: #04928e;
+  --ol-cyan-300: #8de4df;
+  --ol-sky-100: #e7f4f8;
+  --ol-slate-700: #3a4a63;
+  --ol-slate-500: #5d6d89;
+  --ol-bg: #f3f7fb;
+  --ol-card: #ffffff;
+  --ol-danger: #b43b46;
+  --ol-shadow: 0 14px 35px rgba(11, 31, 59, 0.1);
+
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  line-height: 1.4;
+  color: var(--ol-navy-900);
+  background-color: var(--ol-bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(9, 180, 176, 0.18), transparent 35%),
+    radial-gradient(circle at 88% 10%, rgba(11, 31, 59, 0.15), transparent 30%),
+    var(--ol-bg);
+}
+
+#root {
+  min-height: 100vh;
+}

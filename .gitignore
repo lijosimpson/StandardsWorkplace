@@ -1,0 +1,21 @@
+# Node dependencies
+backend/node_modules/
+frontend/node_modules/
+
+# Build outputs
+backend/dist/
+frontend/dist/
+
+# Local runtime data
+backend/data/store.json
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Logs
+*.log
+
+# Env
+.env
+.env.*
+
+node_modules/

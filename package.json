@@ -1,0 +1,20 @@
+{
+    "name":  "coc",
+    "version":  "1.0.0",
+    "description":  "End-to-end local web application for hospital CoC accreditation tracking with auditor-visible outputs.",
+    "scripts":  {
+                    "predev":  "kill-port 4000 5173 5174 5175",
+                    "dev":  "concurrently --names \"backend,frontend\" --prefix-colors \"cyan,magenta\" \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+                    "build":  "npm run build --prefix backend \u0026\u0026 npm run build --prefix frontend",
+                    "install:all":  "npm install --prefix backend \u0026\u0026 npm install --prefix frontend",
+                    "start":  "concurrently --names \"backend,frontend\" --prefix-colors \"cyan,magenta\" \"npm run start --prefix backend\" \"npm run dev --prefix frontend\"",
+                    "github:push":  "powershell -ExecutionPolicy Bypass -File ./scripts/push-to-github.ps1",
+                    "test:all":  "npm run test --prefix backend \u0026\u0026 npm run test --prefix frontend",
+                    "test:all:full":  "npm run test:all \u0026\u0026 npm run lint --prefix frontend \u0026\u0026 npm run build"
+                },
+    "devDependencies":  {
+                            "concurrently":  "^9.2.1",
+                            "kill-port":  "^2.0.1"
+                        },
+    "license":  "ISC"
+}
