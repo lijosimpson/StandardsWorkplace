@@ -256,20 +256,39 @@ const normalizeAccreditationFramework = (value: unknown): AccreditationFramework
 
 const allowedCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((entry) => entry.trim()).filter(Boolean);
 
-const isVercelRuntime = Boolean(
+const isServerlessRuntime = Boolean(
   process.env.VERCEL ||
   process.env.VERCEL_ENV ||
   process.env.AWS_LAMBDA_FUNCTION_NAME ||
   process.env.LAMBDA_TASK_ROOT ||
   /[\\/]var[\\/]task(?:[\\/]|$)/.test(__dirname)
 );
-const runtimeRoot = isVercelRuntime ? path.join("/tmp", "standardsworkplace") : path.resolve(__dirname, "..");
+
+const resolveWritableRuntimeRoot = (): string => {
+  const candidateRoots = isServerlessRuntime
+    ? [path.join("/tmp", "standardsworkplace"), path.resolve(__dirname, "..")]
+    : [path.resolve(__dirname, ".."), path.join("/tmp", "standardsworkplace")];
+
+  for (const candidateRoot of candidateRoots) {
+    const candidateDataDir = path.join(candidateRoot, "data");
+    const candidateUploadsDir = path.join(candidateRoot, "uploads");
+
+    try {
+      fs.mkdirSync(candidateDataDir, { recursive: true });
+      fs.mkdirSync(candidateUploadsDir, { recursive: true });
+      return candidateRoot;
+    } catch (error) {
+      console.warn(`Runtime root unavailable: ${candidateRoot}`, error);
+    }
+  }
+
+  throw new Error("No writable runtime root is available for backend storage.");
+};
+
+const runtimeRoot = resolveWritableRuntimeRoot();
 const dataDir = path.join(runtimeRoot, "data");
 const uploadsDir = path.join(runtimeRoot, "uploads");
 const dataFile = path.join(dataDir, "store.json");
-
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const stateStore = new Map<string, StandardState>();
 let auditLog: AuditLogEntry[] = [];
@@ -2160,13 +2179,16 @@ app.delete("/api/hospitals/:hospitalId/quality-reference-docs/:docId", (req: Req
 
   return res.status(204).send();
 });
-if (!isVercelRuntime) {
+if (!isServerlessRuntime) {
   app.listen(port, () => {
     console.log(`CoC backend listening on port ${port}`);
   });
 }
 
 export default app;
+
+
+
 
 
 
