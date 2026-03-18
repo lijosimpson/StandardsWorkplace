@@ -20,7 +20,7 @@ End-to-end local web application for hospital CoC accreditation tracking with au
   - Evidence file upload and local file serving
   - Assignment creation and status tracking per standard
   - Auditor export endpoint with compliance, evidence, and audit logs
-  - Local JSON persistence for state, uploads metadata, assignments, and logs
+  - Supabase-backed durable app state when configured, with local JSON fallback for development
 - Frontend (React + TypeScript + Vite)
   - OncoLens-inspired color palette and layout
   - Standards dashboard with compliance, task count, and upload count
@@ -32,9 +32,10 @@ End-to-end local web application for hospital CoC accreditation tracking with au
 ## Project layout
 
 - `backend/` API service
-- `backend/data/store.json` persisted local application data
-- `backend/uploads/` uploaded evidence files
+- `backend/data/store.json` local fallback application data
+- `backend/uploads/` local uploaded evidence files
 - `frontend/` web app
+- `supabase/` Supabase CLI config, migrations, and seed data
 - `Optimal_Resources_for_Cancer_Care.pdf` source standards reference
 
 ## Local run
@@ -83,20 +84,31 @@ Frontend URL: `http://localhost:5173`
 - `GET /api/hospitals/:hospitalId/audit-logs`
 - `GET /api/hospitals/:hospitalId/auditor-export`
 
-## Local data behavior
+## Data behavior
 
-- Data persists to `backend/data/store.json`.
-- Uploaded files are stored in `backend/uploads`.
-- Restarting the backend keeps previous local data unless you delete the store file and uploads folder.
+- With Supabase configured, the backend persists durable app state to the `app_state` table.
+- Without Supabase configured, the backend falls back to `backend/data/store.json`.
+- Uploaded files are still stored locally in `backend/uploads` until the storage migration is finished.
+- Restarting the backend keeps previous local fallback data unless you delete the store file and uploads folder.
+
+## Supabase project
+
+- `supabase/config.toml` sets up the local Supabase CLI project.
+- `supabase/seed.sql` seeds the default hospital and empty app state.
+- `supabase/migrations/` contains schema and storage bucket setup.
+
+Local CLI example:
+
+```powershell
+supabase start
+supabase db reset
+supabase status
+```
 
 
 ## Web hosting
 
-See DEPLOY.md for free-hosting options and the current persistence limitation around local JSON and uploads.
+See DEPLOY.md for the current Vercel + Supabase deployment steps. Durable state is now prepared for Supabase; local file uploads are the main remaining temporary-storage limitation.
 
 
-
-## Render + Vercel
-
-This repo now includes Render and Vercel deployment config. See DEPLOY.md for the exact setup.
 

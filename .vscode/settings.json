@@ -35,6 +35,12 @@
             "approve": true,
             "matchCommandLine": true
         },
-        "git ls-remote": true
+        "git ls-remote": true,
+        "ConvertFrom-Json": true,
+        "Add-Member": true,
+        "ConvertTo-Json": true,
+        "Push-Location": true,
+        "Pop-Location": true,
+        "npm run test": true
     }
 }

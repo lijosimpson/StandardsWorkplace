@@ -1,96 +1,89 @@
-# Free Web Hosting
+# Vercel + Supabase Deployment
 
-This app can be hosted on the web as a demo using Vercel for the frontend and Render for the backend.
+This repo is being prepared to run on free Vercel plus free Supabase:
 
-## Important limitation
+- frontend project rooted at frontend
+- backend project rooted at backend
+- Supabase project files rooted at supabase
 
-The current backend stores data in these local paths:
+## Current backend persistence behavior
 
-- backend/data/store.json
-- backend/uploads/
+The backend now supports two persistence modes:
 
-On most low-cost or free-style hosts, local disk is ephemeral or reset on redeploy. That means:
+- Supabase-backed app state through the `app_state` table when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are configured
+- local file fallback when those variables are not configured
 
-- uploaded files can disappear
-- app data can reset
-- this is acceptable for a demo, not for durable production use
+Current limitation:
 
-## Render + Vercel
+- uploaded files are still local-path based and have not been moved to Supabase Storage yet
+- on Vercel, local uploads remain temporary until the upload migration is finished
 
-This repo is now prepared for that setup.
+## Frontend on Vercel
 
-Files added for deployment:
+Use the frontend folder as one Vercel project.
 
-- render.yaml
-- backend/.env.example
-- frontend/vercel.json
-- frontend/.env.example
+Settings:
 
-### 1. Deploy backend to Render
+- Root Directory: frontend
+- Build Command: npm run build
+- Output Directory: dist
+- Environment Variable: VITE_API_BASE=https://YOUR-BACKEND-VERCEL-URL/api
 
-1. In Render, create a new Web Service from this GitHub repo.
-2. Render can read render.yaml automatically.
-3. If Render asks for settings, use:
-   - Root Directory: backend
-   - Build Command: npm install && npm run build
-   - Start Command: npm run start
-   - Health Check Path: /api/health
-4. Set environment variable:
-   - CORS_ORIGIN=https://YOUR-VERCEL-URL.vercel.app
-5. Deploy and copy the backend URL.
+## Backend on Vercel
 
-Expected backend example:
+Use the backend folder as a second Vercel project.
 
-- https://standardsworkplace-api.onrender.com
+Settings:
 
-### 2. Deploy frontend to Vercel
+- Root Directory: backend
+- Framework preset: Other
+- Build Command: npm run build
 
-1. Import the same GitHub repo into Vercel.
-2. Set Root Directory to frontend.
-3. Vercel can use frontend/vercel.json automatically.
-4. Add environment variable:
-   - VITE_API_BASE=https://YOUR-RENDER-URL.onrender.com/api
-5. Deploy.
+Environment variables:
 
-Expected frontend example:
+- CORS_ORIGIN=https://YOUR-FRONTEND-VERCEL-URL
+- SUPABASE_URL=https://YOUR-PROJECT-REF.supabase.co
+- SUPABASE_SERVICE_ROLE_KEY=YOUR-SERVICE-ROLE-KEY
+- SUPABASE_STORAGE_BUCKET_EVIDENCE=evidence-uploads
+- SUPABASE_STORAGE_BUCKET_PROCESS=process-documents
+- SUPABASE_STORAGE_BUCKET_QUARTERLY=quarterly-evidence
+- SUPABASE_STORAGE_BUCKET_QUALITY=quality-reference-docs
 
-- https://standards-workplace.vercel.app
+## Supabase setup
 
-### 3. Smoke test
+Repo files:
 
-- Open the frontend URL
-- Confirm standards load
-- Confirm the browser shows no localhost API calls
-- Confirm backend health works at /api/health
+- supabase/config.toml
+- supabase/seed.sql
+- supabase/migrations/20260318_0001_initial_schema.sql
+- supabase/migrations/20260318_0002_storage_buckets.sql
 
-## Automatic GitHub uploads
+Local CLI workflow:
 
-I also configured a local git post-commit hook path for this repo.
+```powershell
+supabase start
+supabase db reset
+supabase status
+```
 
-What it does:
+Hosted project setup:
 
-- after each local git commit, git automatically runs git push origin <current-branch>
+1. Create a free Supabase project.
+2. Run the SQL from the migrations in order, or use the Supabase CLI to push them.
+3. Confirm the `app_state` table exists.
+4. Confirm the storage buckets exist.
+5. Copy `SUPABASE_URL` and the service-role key into the backend Vercel project.
 
-What it does not do:
+## Deploy order
 
-- it does not auto-commit file edits
-- you still need to create a commit
+1. Provision Supabase and apply the schema.
+2. Deploy backend Vercel project with the Supabase environment variables.
+3. Verify https://YOUR-BACKEND-VERCEL-URL/api/health.
+4. Deploy frontend Vercel project with `VITE_API_BASE` pointing to the backend URL plus `/api`.
+5. Set backend `CORS_ORIGIN` to the frontend URL.
 
-That is the safe boundary. Auto-committing every file save would be noisy and risky.
+## Auto GitHub uploads
 
-## Local hook activation in this repo
+This repo includes a local post-commit hook in `.githooks/post-commit`.
 
-Run once if needed:
-
-- git config core.hooksPath .githooks
-
-The repo includes:
-
-- .githooks/post-commit
-
-## If you want durable hosting later
-
-You said we will do this later. The right next upgrade is:
-
-- database: Supabase Postgres or Neon
-- file storage: Supabase Storage or Cloudflare R2
+Each new local commit is pushed to `origin` automatically.

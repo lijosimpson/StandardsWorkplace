@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import multer from "multer";
 import { AccreditationFramework, standards, StandardDefinition, standardRoleLists } from "./standards";
+import { loadPersistedData, savePersistedData } from "./lib/persistence";
 
 type StandardStatus = "in-progress" | "ready-for-admin" | "locked";
 type UserRole = "admin" | "owner" | "staff" | "auditor";
@@ -255,9 +256,11 @@ const normalizeAccreditationFramework = (value: unknown): AccreditationFramework
 
 const allowedCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((entry) => entry.trim()).filter(Boolean);
 
-const dataDir = path.resolve(__dirname, "..", "data");
-const uploadsDir = path.resolve(__dirname, "..", "uploads");
-const dataFile = path.resolve(dataDir, "store.json");
+const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+const runtimeRoot = isVercelRuntime ? path.join("/tmp", "standardsworkplace") : path.resolve(__dirname, "..");
+const dataDir = path.join(runtimeRoot, "data");
+const uploadsDir = path.join(runtimeRoot, "uploads");
+const dataFile = path.join(dataDir, "store.json");
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -797,7 +800,7 @@ const buildCommitteeMeetingAppendices = (
   return Array.from(appendixMap.values());
 };
 
-const persist = () => {
+const persist = async () => {
   const payload: PersistedData = {
     stateEntries: Array.from(stateStore.entries()).map(([key, value]) => ({ key, value })),
     auditLog,
@@ -813,15 +816,12 @@ const persist = () => {
     strategyChecklistItems,
     standardRoleAssignments
   };
-  fs.writeFileSync(dataFile, JSON.stringify(payload, null, 2));
+  await savePersistedData(payload, dataFile);
 };
 
-const loadPersisted = () => {
-  if (!fs.existsSync(dataFile)) return;
-  const raw = fs.readFileSync(dataFile, "utf8");
-  if (!raw.trim()) return;
-
-  const parsed = JSON.parse(raw) as PersistedData;
+const loadPersisted = async () => {
+  const parsed = await loadPersistedData<PersistedData>(dataFile);
+  if (!parsed) return;
   let didNormalizeMetricLabels = false;
 
   parsed.stateEntries?.forEach((entry) => {
@@ -955,13 +955,38 @@ const loadPersisted = () => {
   });
 
   if (didNormalizeMetricLabels) {
-    persist();
+    void persist();
   }
 };
 
-loadPersisted();
+let startupError: Error | null = null;
+const dataLoadPromise = loadPersisted().catch((error: unknown) => {
+  startupError = error instanceof Error ? error : new Error(String(error));
+  console.error("Failed to initialize persisted backend state", startupError);
+});
 
-app.get("/api/health", (_req: Request, res: Response) => {
+app.use(async (_req, res, next) => {
+  await dataLoadPromise;
+  if (startupError) {
+    return res.status(500).json({
+      error: "Backend startup failed",
+      details: startupError.message,
+    });
+  }
+  next();
+});
+
+app.get("/api/health", async (_req: Request, res: Response) => {
+  await dataLoadPromise;
+  if (startupError) {
+    return res.status(500).json({
+      status: "error",
+      service: "coc-backend",
+      now: new Date().toISOString(),
+      details: startupError.message,
+    });
+  }
+
   res.json({ status: "ok", service: "coc-backend", now: new Date().toISOString() });
 });
 
@@ -2072,7 +2097,9 @@ app.get("/api/hospitals/:hospitalId/registry-dashboard", (req: Request, res: Res
     committeeMeetingsCompleted: committeeSlice.filter((item) => item.status === "held" || item.status === "minutes-uploaded" || item.status === "closed").length,
     oncoLensAssistNote: "OncoLens automation assists with conference workflow coordination and registry dashboard readiness tracking."
   });
-});app.get("/api/hospitals/:hospitalId/quality-reference-docs", (req: Request, res: Response) => {
+});
+
+app.get("/api/hospitals/:hospitalId/quality-reference-docs", (req: Request, res: Response) => {
   const hospital = hospitals.find((h) => h.id === req.params.hospitalId);
   if (!hospital) return res.status(404).json({ error: "Hospital not found" });
 
@@ -2127,9 +2154,19 @@ app.delete("/api/hospitals/:hospitalId/quality-reference-docs/:docId", (req: Req
 
   return res.status(204).send();
 });
-app.listen(port, () => {
-  console.log(`CoC backend listening on port ${port}`);
-});
+if (!isVercelRuntime) {
+  app.listen(port, () => {
+    console.log(`CoC backend listening on port ${port}`);
+  });
+}
+
+export default app;
+
+
+
+
+
+
 
 
 
