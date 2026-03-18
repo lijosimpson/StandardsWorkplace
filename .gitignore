@@ -19,3 +19,7 @@ backend/uploads/*
 .env.*
 
 node_modules/
+
+!backend/.env.example
+!frontend/.env.example
+
