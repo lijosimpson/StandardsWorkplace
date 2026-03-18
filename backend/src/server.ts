@@ -1001,6 +1001,28 @@ app.use(async (_req, res, next) => {
   next();
 });
 
+app.get("/", async (_req: Request, res: Response) => {
+  await dataLoadPromise;
+  if (startupError) {
+    return res.status(500).json({
+      status: "error",
+      service: "coc-backend",
+      now: new Date().toISOString(),
+      details: startupError.message,
+    });
+  }
+
+  return res.json({
+    status: "ok",
+    service: "coc-backend",
+    health: "/api/health",
+  });
+});
+
+app.get("/favicon.ico", (_req: Request, res: Response) => {
+  res.status(204).end();
+});
+
 app.get("/api/health", async (_req: Request, res: Response) => {
   await dataLoadPromise;
   if (startupError) {
@@ -2186,6 +2208,7 @@ if (!isServerlessRuntime) {
 }
 
 export default app;
+
 
 
 
