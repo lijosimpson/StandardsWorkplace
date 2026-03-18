@@ -256,7 +256,13 @@ const normalizeAccreditationFramework = (value: unknown): AccreditationFramework
 
 const allowedCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((entry) => entry.trim()).filter(Boolean);
 
-const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+const isVercelRuntime = Boolean(
+  process.env.VERCEL ||
+  process.env.VERCEL_ENV ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT ||
+  /[\\/]var[\\/]task(?:[\\/]|$)/.test(__dirname)
+);
 const runtimeRoot = isVercelRuntime ? path.join("/tmp", "standardsworkplace") : path.resolve(__dirname, "..");
 const dataDir = path.join(runtimeRoot, "data");
 const uploadsDir = path.join(runtimeRoot, "uploads");
@@ -2161,6 +2167,7 @@ if (!isVercelRuntime) {
 }
 
 export default app;
+
 
 
 
