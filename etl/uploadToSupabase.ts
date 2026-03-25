@@ -60,6 +60,25 @@ const UPLOAD_CONFIGS: UploadConfig[] = [
   { file: "medicaid_utilization_2023.json", table: "medicaid_drug_utilization", description: "Medicaid utilization 2023" }
 ];
 
+async function insertBatchWithRetry(table: string, batch: object[], batchNum: number, maxRetries = 3): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const { error } = await supabase.from(table).insert(batch);
+    if (!error) return true;
+    if (attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, 2s backoff
+    } else {
+      console.warn(`\n    Batch ${batchNum} failed after ${maxRetries} attempts: ${error.message}`);
+    }
+  }
+  return false;
+}
+
+async function clearTable(table: string): Promise<void> {
+  // Delete all rows by matching id >= 0 (works for bigserial tables)
+  const { error } = await supabase.from(table).delete().gte("id", 0);
+  if (error) console.warn(`  Warning: could not clear ${table}: ${error.message}`);
+}
+
 async function uploadFile(config: UploadConfig): Promise<void> {
   const filePath = path.join(PROCESSED_DIR, config.file);
 
@@ -77,33 +96,21 @@ async function uploadFile(config: UploadConfig): Promise<void> {
   console.log(`  Uploading ${config.description} (${rows.length.toLocaleString()} rows) → ${config.table}`);
 
   let uploaded = 0;
-  const errors: string[] = [];
+  let failed = 0;
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabase
-      .from(config.table)
-      .insert(batch);
-
-    if (error) {
-      errors.push(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`);
-      if (errors.length > 5) {
-        console.error(`\n  Too many errors. Stopping upload for ${config.file}.`);
-        break;
-      }
-    } else {
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const ok = await insertBatchWithRetry(config.table, batch, batchNum);
+    if (ok) {
       uploaded += batch.length;
+    } else {
+      failed += batch.length;
     }
-
     process.stdout.write(`\r    ${uploaded.toLocaleString()} / ${rows.length.toLocaleString()} rows uploaded`);
   }
 
-  console.log(`\n    Done: ${uploaded.toLocaleString()} rows uploaded`);
-
-  if (errors.length > 0) {
-    console.warn(`    Errors (${errors.length}):`);
-    errors.forEach((e) => console.warn(`      ${e}`));
-  }
+  console.log(`\n    Done: ${uploaded.toLocaleString()} uploaded${failed > 0 ? `, ${failed.toLocaleString()} failed` : ""}`);
 }
 
 async function main() {
