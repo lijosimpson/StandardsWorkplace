@@ -42,37 +42,37 @@ interface DataFile {
 const DATA_FILES: DataFile[] = [
   {
     name: "medicare_partb_2023.csv",
-    url: "https://data.cms.gov/sites/default/files/2024-11/MUP_PHY_R24_P05_V10_DY23_PRSVC.csv",
+    url: "https://data.cms.gov/sites/default/files/2025-04/e3f823f8-db5b-4cc7-ba04-e7ae92b99757/MUP_PHY_R25_P05_V20_D23_Prov_Svc.csv",
     description: "Medicare Part B Physician/Other Practitioners by Provider & Service, CY2023",
     year: 2023
   },
   {
     name: "medicare_partb_2022.csv",
-    url: "https://data.cms.gov/sites/default/files/2023-11/MUP_PHY_R23_P05_V10_DY22_PRSVC.csv",
+    url: "https://data.cms.gov/sites/default/files/2024-05/1570d9f0-59ef-416f-bb37-e78a7afe6f88/MUP_PHY_R24_P05_V10_D22_Prov_Svc.csv",
     description: "Medicare Part B Physician/Other Practitioners by Provider & Service, CY2022",
     year: 2022
   },
   {
     name: "medicare_partd_2023.csv",
-    url: "https://data.cms.gov/sites/default/files/2024-11/MUP_DPR_RY24_P04_V10_DY23_NPIBN.csv",
+    url: "https://data.cms.gov/sites/default/files/2025-04/0d5915ce-002c-4d87-bde8-24ffb08bb6cc/MUP_DPR_RY25_P04_V10_DY23_NPIBN.csv",
     description: "Medicare Part D Prescribers by Provider and Drug, CY2023",
     year: 2023
   },
   {
     name: "medicare_partd_2022.csv",
-    url: "https://data.cms.gov/sites/default/files/2023-11/MUP_DPR_RY23_P04_V10_DY22_NPIBN.csv",
+    url: "https://data.cms.gov/sites/default/files/2024-05/18f82097-61a6-4889-9941-9a0b6ad7523c/MUP_DPR_RY24_P04_V10_DY22_NPIBN.csv",
     description: "Medicare Part D Prescribers by Provider and Drug, CY2022",
     year: 2022
   },
   {
     name: "open_payments_general_2023.csv",
-    url: "https://download.cms.gov/openpayments/PGYR2023_P012024_DATA.zip",
-    description: "CMS Open Payments General Payments, PY2023 (contains general payments CSV)",
+    url: "https://download.cms.gov/openpayments/PGYR2023_P01232026_01102026/OP_DTL_GNRL_PGYR2023_P01232026_01102026.csv",
+    description: "CMS Open Payments General Payments, PY2023",
     year: 2023
   },
   {
     name: "open_payments_general_2022.csv",
-    url: "https://download.cms.gov/openpayments/PGYR2022_P012023_DATA.zip",
+    url: "https://download.cms.gov/openpayments/PGYR2022_P01232026_01102026/OP_DTL_GNRL_PGYR2022_P01232026_01102026.csv",
     description: "CMS Open Payments General Payments, PY2022",
     year: 2022
   }
