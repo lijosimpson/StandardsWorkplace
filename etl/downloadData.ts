@@ -48,7 +48,7 @@ const DATA_FILES: DataFile[] = [
   },
   {
     name: "medicare_partb_2022.csv",
-    url: "https://data.cms.gov/sites/default/files/2024-05/1570d9f0-59ef-416f-bb37-e78a7afe6f88/MUP_PHY_R24_P05_V10_D22_Prov_Svc.csv",
+    url: "https://data.cms.gov/sites/default/files/2025-11/53fb2bae-4913-48dc-a6d4-d8c025906567/MUP_PHY_R25_P05_V20_D22_Prov_Svc.csv",
     description: "Medicare Part B Physician/Other Practitioners by Provider & Service, CY2022",
     year: 2022
   },
