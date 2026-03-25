@@ -2533,6 +2533,7 @@ function App() {
             <h3>Registry Dashboard</h3>
             <p className="muted">{registryDashboard?.oncoLensAssistNote ?? "OncoLens automation assists with conference workflow coordination and registry dashboard readiness tracking."}</p>
             {registryDashboard ? (
+              <>
               <div className="ops-summary-grid">
                 <div className="summary-chip"><strong>Total Standards</strong><span>{registryDashboard.totalStandards}</span></div>
                 <div className="summary-chip"><strong>Ready for Admin</strong><span>{registryDashboard.readyForAdminStandards}</span></div>
@@ -2555,6 +2556,7 @@ function App() {
                   <div className="empty-state">All standards currently have their required saved template drafts.</div>
                 )}
               </div>
+              </>
             ) : (
               <div className="empty-state">Registry dashboard is loading.</div>
             )}
