@@ -5,9 +5,8 @@
  * rows involving oncology drugs only, and transforms columns to match
  * the open_payments_oncology Supabase table schema.
  *
- * IMPORTANT: Open Payments data comes as a ZIP file containing multiple CSVs.
- * Before running this script, manually extract the General_Payment_Data file
- * from the ZIP you downloaded and save it in /raw/:
+ * Open Payments data is downloaded directly as CSV by downloadData.ts.
+ * Files are saved to:
  *   raw/open_payments_general_2023.csv
  *   raw/open_payments_general_2022.csv
  *

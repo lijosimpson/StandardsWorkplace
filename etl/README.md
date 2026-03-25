@@ -38,9 +38,7 @@ npm install
 # Step 1: Download raw CMS files (large, takes 30–90 min)
 npm run download
 
-# Step 2: Extract Open Payments ZIPs (manual — see below)
-
-# Step 3: Process and upload everything
+# Step 2: Process and upload everything
 npm run run
 ```
 
@@ -62,15 +60,7 @@ Downloads to `raw/`. Files are large (100MB–2GB each). Already-downloaded file
 3. Update the URL in `downloadData.ts`
 4. Or download manually and save to `raw/` with the expected filename
 
-### Step 2: Extract Open Payments ZIPs
-
-The Open Payments files download as ZIP archives. Extract manually:
-1. Open `raw/open_payments_general_2023.csv.zip` (or `.zip`)
-2. Find the file named `OP_DTL_GNRL_PGYR2023_P*.csv`
-3. Copy it to `raw/open_payments_general_2023.csv`
-4. Repeat for 2022
-
-### Step 3: Download Medicaid Data (Manual)
+### Step 2: Download Medicaid Data (Manual)
 
 Medicaid data requires manual download:
 1. Go to [data.medicaid.gov](https://data.medicaid.gov/)
