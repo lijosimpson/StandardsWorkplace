@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { api } from "./api";
+import { AnalyzerPage } from "./AnalyzerPage";
 import type {
   AssignmentItem,
   AuditLogEntry,
@@ -8,6 +9,7 @@ import type {
   CommitteeMeetingAppendixInput,
   CommitteePerson,
   CustomQualityMetric,
+  DocumentExportFormat,
   Hospital,
   ProcessDocument,
   PrqWarRoomItem,
@@ -125,12 +127,238 @@ const buildMetricWordingGuidance = (standardCode: string): string => {
       return "Use program-owned wording that clearly matches the evidence your team is tracking for this standard.";
   }
 };
+
+const sanitizeFileStem = (value: string): string => {
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "committee-appendix";
+};
+
+const escapeHtml = (value: string): string => value
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/\"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const buildStandardCommitteeAppendixTemplate = (
+  detail: StandardDetailResponse,
+  metricLabels: string[]
+): string => {
+  const metricLines = metricLabels.length > 0
+    ? metricLabels.map((label, index) => `- [${detail.state.componentsComplete[index] ? "x" : " "}] ${label}`).join("\n")
+    : "- No metric wording has been configured yet.";
+
+  const processLines = detail.standard.hospitalProcess.length > 0
+    ? detail.standard.hospitalProcess.map((step, index) => {
+      const completedQuarters = Object.entries(detail.state.processQuarterChecks[String(index)] || {})
+        .filter(([, checked]) => checked)
+        .map(([quarter]) => quarter);
+      const linkedDocs = detail.processDocuments
+        .filter((doc) => doc.processIndex === index)
+        .map((doc) => doc.originalName);
+      const statusSuffix = detail.state.processHiddenSteps[String(index)]
+        ? " | status: not required"
+        : completedQuarters.length > 0
+          ? ` | completed quarters: ${completedQuarters.join(", ")}`
+          : "";
+      const docSuffix = linkedDocs.length > 0 ? ` | supporting docs: ${linkedDocs.join(", ")}` : "";
+      return `- Step ${index + 1}: ${step}${statusSuffix}${docSuffix}`;
+    }).join("\n")
+    : "- No hospital process steps are configured for this standard.";
+
+  const uploadLines = detail.uploads.length > 0
+    ? detail.uploads.map((item) => `- ${item.originalName}`).join("\n")
+    : "- No standard uploads are currently stored.";
+
+  const assignmentLines = detail.assignments.length > 0
+    ? detail.assignments.map((item) => `- ${item.componentLabel} | ${item.assignee} | due ${item.dueDate} | ${item.status}`).join("\n")
+    : "- No assignments are currently open for this standard.";
+
+  return [
+    `${detail.standard.code} ${detail.standard.name} Cancer Committee Appendix`,
+    "",
+    `Category: ${detail.standard.category}`,
+    `Framework: ${detail.standard.framework}`,
+    `Current compliance: ${detail.results.numerator}/${detail.results.denominator} (${detail.results.compliancePercent}%)`,
+    `Threshold: ${detail.standard.threshold.label}`,
+    "",
+    "Committee discussion summary",
+    "- Summarize the discussion, findings, and any concerns reviewed by the committee.",
+    "",
+    "Editable metric wording",
+    metricLines,
+    "",
+    "Hospital process / workflow",
+    processLines,
+    "",
+    "Evidence currently on file",
+    uploadLines,
+    "",
+    "Assignments / follow-up",
+    assignmentLines,
+    "",
+    "Committee decisions and action items",
+    "- Decision:",
+    "- Owner:",
+    "- Due date:",
+    "",
+    "Appendix note",
+    "- This appendix was generated from the live standard workspace and may be edited before final committee filing."
+  ].join("\n");
+};
+
+const buildWordDocumentHtml = (title: string, body: string): string => `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body {
+        font-family: Calibri, Arial, sans-serif;
+        color: #1f2937;
+        margin: 36px;
+      }
+      h1 {
+        font-size: 18pt;
+        margin-bottom: 8px;
+      }
+      p.meta {
+        color: #4b5563;
+        margin: 0 0 18px;
+      }
+      pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: Calibri, Arial, sans-serif;
+        font-size: 11pt;
+        line-height: 1.45;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="meta">Generated ${escapeHtml(new Date().toLocaleString())}</p>
+    <pre>${escapeHtml(body)}</pre>
+  </body>
+</html>`;
+
+const buildQuarterSnapshot = (checks: Record<string, boolean>): string =>
+  (["Q1", "Q2", "Q3", "Q4"] as const)
+    .map((quarter) => `${quarter}: ${checks[quarter] ? "Complete" : "Open"}`)
+    .join("\n");
+
+const buildStandardEvidenceTemplate = (detail: StandardDetailResponse, metricLabels: string[]): string => {
+  const currentLabels = metricLabels.length > 0 ? metricLabels : detail.state.metricLabels;
+  const storedFiles = detail.uploads.length > 0
+    ? detail.uploads.map((item) => `- ${item.originalName}`).join("\n")
+    : "- No standard-level files are stored yet.";
+
+  return [
+    `${detail.standard.code} ${detail.standard.name} Working Evidence Template`,
+    "",
+    `Category: ${detail.standard.category}`,
+    `Threshold: ${detail.standard.threshold.label}`,
+    `Current compliance: ${detail.results.compliancePercent}%`,
+    "",
+    "Program summary",
+    "- Describe how this standard is operationalized at the hospital.",
+    "- Identify the owner responsible for maintaining this evidence.",
+    "",
+    "Editable standard language / metric wording",
+    ...currentLabels.map((label, index) => `- ${index + 1}. ${label}`),
+    "",
+    "Required evidence narrative",
+    "- Source documents reviewed:",
+    "- Meeting or review dates:",
+    "- Gaps identified:",
+    "- Corrective action / monitoring plan:",
+    "",
+    "Currently stored files",
+    storedFiles,
+    "",
+    "Committee appendix summary",
+    "- Summarize the points that should carry into committee minutes or the appendix."
+  ].join("\n");
+};
+
+const buildProcessStepTemplate = (
+  detail: StandardDetailResponse,
+  processIndex: number,
+  displayedStepLabel: string
+): string => {
+  const key = String(processIndex);
+  const quarterSnapshot = buildQuarterSnapshot(detail.state.processQuarterChecks?.[key] || {});
+  const stepDocs = detail.processDocuments.filter((doc) => doc.processIndex === processIndex);
+  const storedStepDocs = stepDocs.length > 0
+    ? stepDocs.map((doc) => `- ${doc.originalName}`).join("\n")
+    : "- No step-specific files are stored yet.";
+
+  return [
+    `${detail.standard.code} ${detail.standard.name} - Step ${processIndex + 1}`,
+    "",
+    `Step objective: ${displayedStepLabel}`,
+    `Required status: ${detail.state.processHiddenSteps?.[key] ? "Marked not required" : "Required"}`,
+    "",
+    "Step write-up",
+    "- Describe how this step is completed in practice.",
+    "- Identify the workflow, policy, data source, or report that supports the step.",
+    "- Record the staff role or owner responsible for updates.",
+    "",
+    "Quarter storage snapshot",
+    quarterSnapshot,
+    "",
+    "Evidence and review details",
+    "- Evidence reviewed:",
+    "- Date reviewed:",
+    "- Findings / variances:",
+    "- Follow-up actions:",
+    "",
+    "Existing step files",
+    storedStepDocs,
+    "",
+    "Committee appendix note",
+    "- Summarize what should be carried into committee minutes for this step."
+  ].join("\n");
+};
+
 type CommitteeAppendixDraft = CommitteeMeetingAppendixInput & {
   label: string;
   filePath: string;
   standardCode: string;
   processIndex: number | null;
+  templateDraftKind: TemplateDraft["kind"] | null;
 };
+
+type StandardTemplateDraft = {
+  title: string;
+  body: string;
+};
+
+const findSavedTemplateDraft = (
+  detail: StandardDetailResponse,
+  kind: TemplateDraft["kind"],
+  processIndex: number | null = null
+): TemplateDraft | undefined => detail.templateDrafts.find((item) => item.kind === kind && item.processIndex === processIndex);
+
+const formatSavedDraftNote = (draft?: TemplateDraft): string => {
+  if (!draft) return "No saved draft yet.";
+  return `Saved draft updated ${new Date(draft.updatedAt).toLocaleString()} by ${draft.updatedBy}.`;
+};
+
+const createTemplateDraftAppendixDraft = (draft: TemplateDraft): CommitteeAppendixDraft => ({
+  sourceType: "template-draft",
+  sourceId: draft.id,
+  explanation: "",
+  label: draft.title,
+  filePath: "",
+  standardCode: draft.standardCode,
+  processIndex: draft.processIndex,
+  templateDraftKind: draft.kind
+});
 
 const buildCommitteeAppendixKey = (appendix: Pick<CommitteeMeetingAppendixInput, "sourceType" | "sourceId">): string => `${appendix.sourceType}:${appendix.sourceId}`;
 
@@ -141,12 +369,14 @@ const createCommitteeAppendixDraft = (item: UploadItem | ProcessDocument, source
   label: sourceType === "process-document" ? `Step ${(item as ProcessDocument).processIndex + 1}: ${item.originalName}` : item.originalName,
   filePath: item.filePath,
   standardCode: item.standardCode,
-  processIndex: sourceType === "process-document" ? (item as ProcessDocument).processIndex : null
+  processIndex: sourceType === "process-document" ? (item as ProcessDocument).processIndex : null,
+  templateDraftKind: null
 });
 
 function App() {
   const [role, setRole] = useState<UserRole>("owner");
   const [userName, setUserName] = useState("Cancer Program User");
+  const [showAnalyzer, setShowAnalyzer] = useState(false);
 
   const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [selectedHospitalId, setSelectedHospitalId] = useState("");
@@ -226,6 +456,13 @@ function App() {
     referencedUploadIds: [],
     appendices: []
   });
+  const [appendixTemplateTitle, setAppendixTemplateTitle] = useState("");
+  const [appendixTemplateBody, setAppendixTemplateBody] = useState("");
+  const [standardEvidenceDraft, setStandardEvidenceDraft] = useState<StandardTemplateDraft | null>(null);
+  const [processTemplateDrafts, setProcessTemplateDrafts] = useState<Record<number, StandardTemplateDraft>>({});
+  const prqItemValidationMessage = !newPrqItem.title.trim() || !newPrqItem.owner.trim() || !newPrqItem.dueDate
+    ? "Title, owner, and due date are required to add a strategy item."
+    : "";
 
   const filteredStandards = useMemo(
     () => standards.filter((item) => !item.retired && selectedFrameworks.includes(item.framework)),
@@ -275,6 +512,14 @@ function App() {
   const standardMinutesAppendixKeys = useMemo(
     () => new Set(standardMinutesEntry.appendices.map((item) => buildCommitteeAppendixKey(item))),
     [standardMinutesEntry.appendices]
+  );
+  const standardEvidenceSavedDraft = useMemo(
+    () => detail ? findSavedTemplateDraft(detail, "standard-evidence") : undefined,
+    [detail]
+  );
+  const committeeAppendixSavedDraft = useMemo(
+    () => detail ? findSavedTemplateDraft(detail, "committee-appendix") : undefined,
+    [detail]
   );
 
   const loadHospitals = async () => {
@@ -439,6 +684,21 @@ function App() {
   useEffect(() => {
     if (!detail) return;
     setStandardMinutesEntry(makeStandardMinutesEntry(detail));
+
+    const standardDraft = findSavedTemplateDraft(detail, "standard-evidence");
+    setStandardEvidenceDraft(standardDraft ? { title: standardDraft.title, body: standardDraft.body } : null);
+
+    const savedProcessDrafts = detail.templateDrafts.reduce<Record<number, StandardTemplateDraft>>((accumulator, draft) => {
+      if (draft.kind === "process-step" && draft.processIndex !== null) {
+        accumulator[draft.processIndex] = { title: draft.title, body: draft.body };
+      }
+      return accumulator;
+    }, {});
+    setProcessTemplateDrafts(savedProcessDrafts);
+
+    const appendixDraft = findSavedTemplateDraft(detail, "committee-appendix");
+    setAppendixTemplateTitle(appendixDraft?.title || `${detail.standard.code} ${detail.standard.name} Committee Appendix`);
+    setAppendixTemplateBody(appendixDraft?.body || buildStandardCommitteeAppendixTemplate(detail, detail.state.metricLabels));
   }, [detail]);
 
   useEffect(() => {
@@ -1073,6 +1333,282 @@ function App() {
     }));
   };
 
+  const rebuildStandardAppendixTemplate = () => {
+    if (!detail) return;
+    setAppendixTemplateTitle(`${detail.standard.code} ${detail.standard.name} Committee Appendix`);
+    setAppendixTemplateBody(buildStandardCommitteeAppendixTemplate(
+      detail,
+      editableMetricLabels.length > 0 ? editableMetricLabels : detail.state.metricLabels
+    ));
+    setNotice("Committee appendix template rebuilt from the current standard view.");
+    setError("");
+  };
+
+  const saveCommitteeAppendixDraft = async () => {
+    if (!detail || !selectedHospitalId || role === "auditor") return;
+
+    const cleanTitle = appendixTemplateTitle.trim() || `${detail.standard.code} ${detail.standard.name} Committee Appendix`;
+    const cleanBody = appendixTemplateBody.trim();
+    if (!cleanBody) {
+      setError("Appendix template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await api.saveTemplateDraft(selectedHospitalId, detail.standard.code, role, userName, {
+        kind: "committee-appendix",
+        title: cleanTitle,
+        body: cleanBody
+      });
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      setNotice("Committee appendix draft saved.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the committee appendix draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveStandardAppendixTemplate = async (addToMinutes: boolean) => {
+    if (!detail || !selectedHospitalId || role === "auditor") return;
+
+    const cleanTitle = appendixTemplateTitle.trim() || `${detail.standard.code} ${detail.standard.name} Committee Appendix`;
+    const cleanBody = appendixTemplateBody.trim();
+
+    if (!cleanBody) {
+      setError("Appendix template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const fileName = `${sanitizeFileStem(cleanTitle)}.doc`;
+      const html = buildWordDocumentHtml(cleanTitle, cleanBody);
+      const file = new File([html], fileName, { type: "application/msword" });
+
+      const downloadUrl = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = fileName;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+
+      const uploaded = await api.uploadEvidence(selectedHospitalId, detail.standard.code, role, userName, file);
+      if (addToMinutes) {
+        queueStandardMinutesAppendix({
+          ...createCommitteeAppendixDraft(uploaded, "upload"),
+          explanation: `Program-generated appendix template for ${detail.standard.code} ${detail.standard.name}.`
+        });
+      }
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      await refreshVisibleOperationsData(selectedHospitalId);
+      setNotice(addToMinutes ? "Word appendix saved and added to the minutes appendix draft." : "Word appendix saved to the file list for this standard.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the committee appendix document");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const downloadBlob = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
+
+  const createExportedTemplateFile = async (title: string, body: string, format: DocumentExportFormat): Promise<File> => {
+    const fileName = `${sanitizeFileStem(title)}.${format}`;
+    const blob = await api.exportDocumentTemplate({ title, body, fileName: sanitizeFileStem(title), format });
+    return new File([blob], fileName, {
+      type: format === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/msword"
+    });
+  };
+
+  const startStandardEvidenceTemplate = () => {
+    if (!detail) return;
+    setStandardEvidenceDraft({
+      title: `${detail.standard.code} ${detail.standard.name} Working Evidence`,
+      body: buildStandardEvidenceTemplate(detail, editableMetricLabels)
+    });
+    setError("");
+  };
+
+  const startProcessTemplateDraft = (processIndex: number, displayedStepLabel: string) => {
+    if (!detail) return;
+    setProcessTemplateDrafts((prev) => ({
+      ...prev,
+      [processIndex]: {
+        title: `${detail.standard.code} Step ${processIndex + 1} ${detail.standard.name}`,
+        body: buildProcessStepTemplate(detail, processIndex, displayedStepLabel)
+      }
+    }));
+    setError("");
+  };
+
+  const downloadTemplateDraft = async (title: string, body: string, format: DocumentExportFormat) => {
+    try {
+      const blob = await api.exportDocumentTemplate({ title, body, fileName: sanitizeFileStem(title), format });
+      downloadBlob(blob, `${sanitizeFileStem(title)}.${format}`);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export the template document");
+    }
+  };
+
+  const restoreTemplateDraftRevision = async (draft: TemplateDraft, revisionId: string) => {
+    if (!selectedHospitalId || role === "auditor") return;
+    try {
+      setLoading(true);
+      await api.restoreTemplateDraftRevision(selectedHospitalId, draft.standardCode, draft.id, revisionId, role, userName);
+      await refreshStandardData(selectedHospitalId, draft.standardCode);
+      setNotice("Template draft version restored.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to restore the template draft version");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteSavedTemplateDraft = async (draft: TemplateDraft) => {
+    if (!selectedHospitalId || role === "auditor") return;
+    try {
+      setLoading(true);
+      await api.deleteTemplateDraft(selectedHospitalId, draft.standardCode, draft.id, role, userName);
+      await refreshStandardData(selectedHospitalId, draft.standardCode);
+      await refreshVisibleOperationsData(selectedHospitalId);
+      setNotice("Saved template draft deleted.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete the saved template draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const renderTemplateDraftHistory = (draft?: TemplateDraft) => {
+    if (!draft || draft.revisionHistory.length === 0) return null;
+    return (
+      <div className="list-compact">
+        {draft.revisionHistory.map((revision) => (
+          <div key={revision.id} className="audit-item">
+            <div className="audit-row"><strong>Previous version</strong><span>{new Date(revision.savedAt).toLocaleString()}</span></div>
+            <div className="muted">Saved by {revision.savedBy}</div>
+            <div className="button-row">
+              <button type="button" disabled={role === "auditor"} onClick={() => restoreTemplateDraftRevision(draft, revision.id)}>Restore Version</button>
+              <button type="button" onClick={() => downloadTemplateDraft(revision.title, revision.body, "docx")}>Download .docx</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const saveStandardEvidenceDraft = async () => {
+    if (!detail || !selectedHospitalId || !standardEvidenceDraft || role === "auditor") return;
+    if (!standardEvidenceDraft.body.trim()) {
+      setError("Standard template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await api.saveTemplateDraft(selectedHospitalId, detail.standard.code, role, userName, {
+        kind: "standard-evidence",
+        title: standardEvidenceDraft.title.trim() || `${detail.standard.code} ${detail.standard.name} Working Evidence`,
+        body: standardEvidenceDraft.body.trim()
+      });
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      setNotice("Standard template draft saved.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the standard template draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveStandardEvidenceTemplate = async () => {
+    if (!detail || !selectedHospitalId || !standardEvidenceDraft || role === "auditor") return;
+    if (!standardEvidenceDraft.body.trim()) {
+      setError("Standard template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const file = await createExportedTemplateFile(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx");
+      await api.uploadEvidence(selectedHospitalId, detail.standard.code, role, userName, file);
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      await refreshVisibleOperationsData(selectedHospitalId);
+      setNotice("Standard template saved to the standard file list.");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the standard template");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveProcessTemplateEditor = async (processIndex: number) => {
+    if (!detail || !selectedHospitalId || role === "auditor") return;
+    const draft = processTemplateDrafts[processIndex];
+    if (!draft) return;
+    if (!draft.body.trim()) {
+      setError("Process step template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await api.saveTemplateDraft(selectedHospitalId, detail.standard.code, role, userName, {
+        kind: "process-step",
+        processIndex,
+        title: draft.title.trim() || `${detail.standard.code} Step ${processIndex + 1} ${detail.standard.name}`,
+        body: draft.body.trim()
+      });
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      setNotice(`Step ${processIndex + 1} template draft saved.`);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the process template draft");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveProcessTemplateDraft = async (processIndex: number) => {
+    if (!detail || !selectedHospitalId || role === "auditor") return;
+    const draft = processTemplateDrafts[processIndex];
+    if (!draft) return;
+    if (!draft.body.trim()) {
+      setError("Process step template content cannot be blank.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const file = await createExportedTemplateFile(draft.title, draft.body, "docx");
+      await api.uploadProcessDoc(selectedHospitalId, detail.standard.code, role, userName, processIndex, file);
+      await refreshStandardData(selectedHospitalId, detail.standard.code);
+      await refreshVisibleOperationsData(selectedHospitalId);
+      setNotice(`Step ${processIndex + 1} template saved to the process file list.`);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save the process template");
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   return (
     <div className="app-shell">
@@ -1098,6 +1634,13 @@ function App() {
           </details>
         </div>
         <div className="top-bar-controls">
+          <button
+            className={`toolbar-button analyzer-nav-btn${showAnalyzer ? " analyzer-nav-active" : ""}`}
+            type="button"
+            onClick={() => setShowAnalyzer((v) => !v)}
+          >
+            {showAnalyzer ? "← Standards" : "Analyzer ◆"}
+          </button>
           <button className="toolbar-button" type="button" onClick={() => setOperationsOpen((current) => !current)}>
             {operationsOpen ? "Close Operations" : "Open Operations"}
           </button>
@@ -1129,6 +1672,9 @@ function App() {
       {error && <div className="error-banner">{error}</div>}
       {notice && <div className="notice-banner">{notice}</div>}
 
+      {showAnalyzer ? (
+        <AnalyzerPage />
+      ) : (
       <main className="layout-grid">
         <aside className="card standards-panel">
           <h2>Standards</h2>
@@ -1191,11 +1737,53 @@ function App() {
 
               <div className="detail-grid">
                 <article className="section-card full-width-card standard-start-card">
-                  <h3>Start Here: Upload Working Evidence</h3>
+                  <h3>Start Here: Create Working Template</h3>
                   <p className="muted">{buildEvidenceUploadGuidance(detail.standard.code)}</p>
                   <div className="button-row">
-                    <input key={`upload-start-${selectedHospitalId}-${selectedStandardCode}`} type="file" multiple onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} disabled={role === "auditor"} />
-                    <button onClick={uploadEvidence} disabled={selectedFiles.length === 0 || role === "auditor"}>Upload {selectedFiles.length > 1 ? `${selectedFiles.length} Documents` : "Tracking Document"}</button>
+                    <button type="button" disabled={role === "auditor"} onClick={startStandardEvidenceTemplate}>
+                      {standardEvidenceDraft ? "Reset Standard Template" : "Start New Standard Template"}
+                    </button>
+                    <button type="button" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceDraft}>Save Draft</button>
+                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "doc")}>Download .doc</button>
+                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx")}>Download .docx</button>
+                    <button type="button" className="primary" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceTemplate}>Save To Standard Files</button>
+                    <button
+                      type="button"
+                      disabled={!standardEvidenceSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft?.id || "" }))}
+                      onClick={() => standardEvidenceSavedDraft && queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(standardEvidenceSavedDraft))}
+                    >
+                      {standardEvidenceSavedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix"}
+                    </button>
+                    <button type="button" disabled={!standardEvidenceSavedDraft || role === "auditor"} onClick={() => standardEvidenceSavedDraft && deleteSavedTemplateDraft(standardEvidenceSavedDraft)}>Delete Saved Draft</button>
+                  </div>
+                  <p className="muted">{formatSavedDraftNote(standardEvidenceSavedDraft)}</p>
+                  {renderTemplateDraftHistory(standardEvidenceSavedDraft)}
+                  {standardEvidenceDraft && (
+                    <div className="template-editor-panel">
+                      <input
+                        value={standardEvidenceDraft.title}
+                        disabled={role === "auditor"}
+                        onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, title: e.target.value } : prev)}
+                      />
+                      <textarea
+                        className="template-editor template-editor-compact"
+                        value={standardEvidenceDraft.body}
+                        disabled={role === "auditor"}
+                        onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, body: e.target.value } : prev)}
+                      />
+                    </div>
+                  )}
+                </article>
+
+                <article className="section-card full-width-card">
+                  <h3>Template Coverage</h3>
+                  <p className="muted">Saved draft coverage for this standard: {detail.templateCoverage.savedDraftCount}/{detail.templateCoverage.expectedDraftCount} required templates.</p>
+                  <div className="list-compact">
+                    {detail.templateCoverage.items.map((item) => (
+                      <div key={`${item.kind}-${item.processIndex ?? "core"}`} className="audit-item">
+                        <div className="audit-row"><strong>{item.label}</strong><span>{item.hasSavedDraft ? "Draft saved" : "Draft missing"}</span></div>
+                      </div>
+                    ))}
                   </div>
                 </article>
 
@@ -1252,17 +1840,55 @@ function App() {
                                 ))}
                                 <span className="muted" style={{ fontSize: "0.75rem" }}>Quarter completion tracking</span>
                               </div>
-                              <div className="process-doc-upload">
-                                <input
-                                  type="file"
-                                  disabled={role === "auditor"}
-                                  onChange={(e) => setProcessDocFiles((prev) => ({ ...prev, [idx]: e.target.files?.[0] || null }))}
-                                />
+                              <div className="process-doc-upload process-template-actions">
+                                <button type="button" disabled={role === "auditor"} onClick={() => startProcessTemplateDraft(idx, displayedStepLabel)}>
+                                  {processTemplateDrafts[idx] ? "Reset Step Template" : "Start New Step Template"}
+                                </button>
+                                <button type="button" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateEditor(idx)}>Save Draft</button>
+                                <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "doc")}>Download .doc</button>
+                                <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "docx")}>Download .docx</button>
+                                <button type="button" className="primary" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateDraft(idx)}>Save Step Document</button>
                                 <button
-                                  disabled={!pendingFile || role === "auditor"}
-                                  onClick={() => uploadProcessDoc(idx)}
-                                >Store Document</button>
+                                  type="button"
+                                  disabled={!findSavedTemplateDraft(detail, "process-step", idx) || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: findSavedTemplateDraft(detail, "process-step", idx)?.id || "" }))}
+                                  onClick={() => {
+                                    const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                    if (savedDraft) queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(savedDraft));
+                                  }}
+                                >
+                                  {(() => {
+                                    const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                    return savedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: savedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix";
+                                  })()}
+                                </button>
+                                <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx) || role === "auditor"} onClick={() => {
+                                  const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                  if (savedDraft) void deleteSavedTemplateDraft(savedDraft);
+                                }}>Delete Saved Draft</button>
                               </div>
+                              <p className="muted">{formatSavedDraftNote(findSavedTemplateDraft(detail, "process-step", idx))}</p>
+                              {renderTemplateDraftHistory(findSavedTemplateDraft(detail, "process-step", idx))}
+                              {processTemplateDrafts[idx] && (
+                                <div className="template-editor-panel template-editor-panel-step">
+                                  <input
+                                    value={processTemplateDrafts[idx].title}
+                                    disabled={role === "auditor"}
+                                    onChange={(e) => setProcessTemplateDrafts((prev) => ({
+                                      ...prev,
+                                      [idx]: { ...prev[idx], title: e.target.value }
+                                    }))}
+                                  />
+                                  <textarea
+                                    className="template-editor template-editor-compact"
+                                    value={processTemplateDrafts[idx].body}
+                                    disabled={role === "auditor"}
+                                    onChange={(e) => setProcessTemplateDrafts((prev) => ({
+                                      ...prev,
+                                      [idx]: { ...prev[idx], body: e.target.value }
+                                    }))}
+                                  />
+                                </div>
+                              )}
                             </>
                           )}
                           {stepDocs.length > 0 && (
@@ -1477,6 +2103,125 @@ function App() {
                   </div>
                 </article>
 
+                <article className="section-card full-width-card">
+                  <h3>Committee Appendix Template</h3>
+                  <p className="muted">Each standard now gets a built-out appendix draft based on the sections on this page. Edit it here, save it as a Word file, and optionally queue it for the cancer committee minutes.</p>
+                  <div className="ops-form committee-form">
+                    <input
+                      placeholder="Appendix title"
+                      value={appendixTemplateTitle}
+                      disabled={role === "auditor"}
+                      onChange={(e) => setAppendixTemplateTitle(e.target.value)}
+                    />
+                    <button type="button" onClick={rebuildStandardAppendixTemplate}>Rebuild Template</button>
+                    <button type="button" disabled={role === "auditor"} onClick={saveCommitteeAppendixDraft}>Save Draft</button>
+                    <button
+                      type="button"
+                      disabled={!committeeAppendixSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: committeeAppendixSavedDraft?.id || "" }))}
+                      onClick={() => committeeAppendixSavedDraft && queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(committeeAppendixSavedDraft))}
+                    >
+                      {committeeAppendixSavedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: committeeAppendixSavedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix"}
+                    </button>
+                    <button type="button" disabled={!committeeAppendixSavedDraft || role === "auditor"} onClick={() => committeeAppendixSavedDraft && deleteSavedTemplateDraft(committeeAppendixSavedDraft)}>Delete Saved Draft</button>
+                    <button type="button" disabled={role === "auditor"} onClick={() => saveStandardAppendixTemplate(false)}>Save Word File</button>
+                    <button type="button" className="primary" disabled={role === "auditor"} onClick={() => saveStandardAppendixTemplate(true)}>Save Word File + Add To Minutes</button>
+                  </div>
+                  <p className="muted">{formatSavedDraftNote(committeeAppendixSavedDraft)}</p>
+                  {renderTemplateDraftHistory(committeeAppendixSavedDraft)}
+                  <textarea
+                    className="template-editor"
+                    placeholder="Editable appendix template"
+                    value={appendixTemplateBody}
+                    disabled={role === "auditor"}
+                    onChange={(e) => setAppendixTemplateBody(e.target.value)}
+                  />
+                </article>
+
+                <article className="section-card full-width-card">
+                  <h3>Add To Cancer Committee Minutes</h3>
+                  <p className="muted">Create the minutes entry for this standard, then use the appendix buttons in the process and uploads sections on this page to move supporting files into the appendix list with an explanation.</p>
+                  <div className="ops-form committee-form">
+                    <input placeholder="Minutes title" value={standardMinutesEntry.title} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, title: e.target.value }))} />
+                    <input type="date" value={standardMinutesEntry.meetingDate} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, meetingDate: e.target.value }))} />
+                    <select value={standardMinutesEntry.quarter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, quarter: e.target.value as CommitteeMeeting["quarter"] }))}>
+                      <option value="Q1">Q1</option>
+                      <option value="Q2">Q2</option>
+                      <option value="Q3">Q3</option>
+                      <option value="Q4">Q4</option>
+                    </select>
+                    <input placeholder="Presenter / owner" value={standardMinutesEntry.presenter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, presenter: e.target.value }))} />
+                    <button disabled={role === "auditor"} onClick={createStandardCommitteeMeeting}>Add This Standard To Minutes</button>
+                  </div>
+                  <textarea placeholder="Agenda summary or action-item notes" value={standardMinutesEntry.notes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, notes: e.target.value }))} />
+                  <textarea placeholder="Formal minutes text" value={standardMinutesEntry.minutes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, minutes: e.target.value }))} />
+                  {standardMinutesEntry.appendices.length > 0 && (
+                    <div className="selection-panel">
+                      <strong>Appendices queued for these minutes</strong>
+                      <div className="appendix-draft-list">
+                        {standardMinutesEntry.appendices.map((appendix) => (
+                          <div key={buildCommitteeAppendixKey(appendix)} className="appendix-draft-item">
+                            <div className="audit-row"><strong>{appendix.label}</strong><span>{appendix.processIndex !== null ? `Step ${appendix.processIndex + 1}` : "Standard upload"}</span></div>
+                            <textarea
+                              placeholder="Explain why this file belongs in the appendix"
+                              value={appendix.explanation}
+                              disabled={role === "auditor"}
+                              onChange={(e) => updateStandardMinutesAppendixExplanation(appendix, e.target.value)}
+                            />
+                            <div className="button-row">
+                              {appendix.sourceType === "template-draft" ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={!detail.templateDrafts.some((item) => item.id === appendix.sourceId)}
+                                    onClick={() => {
+                                      const savedDraft = detail.templateDrafts.find((item) => item.id === appendix.sourceId);
+                                      if (savedDraft) void downloadTemplateDraft(savedDraft.title, savedDraft.body, "doc");
+                                    }}
+                                  >Download .doc</button>
+                                  <button
+                                    type="button"
+                                    disabled={!detail.templateDrafts.some((item) => item.id === appendix.sourceId)}
+                                    onClick={() => {
+                                      const savedDraft = detail.templateDrafts.find((item) => item.id === appendix.sourceId);
+                                      if (savedDraft) void downloadTemplateDraft(savedDraft.title, savedDraft.body, "docx");
+                                    }}
+                                  >Download .docx</button>
+                                </>
+                              ) : (
+                                <a href={`http://localhost:4000${appendix.filePath}`} target="_blank" rel="noreferrer">Open file</a>
+                              )}
+                              <button type="button" disabled={role === "auditor"} onClick={() => removeStandardMinutesAppendix(appendix)}>Remove Appendix</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {detail.uploads.length > 0 && (
+                    <div className="selection-panel">
+                      <strong>Link uploaded files from this standard</strong>
+                      <div className="list-compact roster-reference-list">
+                        {detail.uploads.map((item) => (
+                          <label key={item.id} className={`selection-row ${standardMinutesEntry.referencedUploadIds.includes(item.id) ? "selection-row-active" : ""}`}>
+                            <input
+                              type="checkbox"
+                              checked={standardMinutesEntry.referencedUploadIds.includes(item.id)}
+                              disabled={role === "auditor"}
+                              onChange={(e) => setStandardMinutesEntry((prev) => ({
+                                ...prev,
+                                referencedUploadIds: e.target.checked
+                                  ? [...prev.referencedUploadIds, item.id]
+                                  : prev.referencedUploadIds.filter((entry) => entry !== item.id)
+                              }))}
+                            />
+                            <span>{item.originalName}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </article>
+
                 {!isMetricsOnlyStandard(detail.standard.code) && (
                   <article className="section-card">
                     <h3>Denominator</h3>
@@ -1564,12 +2309,18 @@ function App() {
                 </article>
 
                 <article className="section-card">
-                  <h3>Additional Evidence Uploads</h3>
-                  <p className="muted">{buildEvidenceUploadGuidance(detail.standard.code)}</p>
+                  <h3>Additional Evidence Templates</h3>
+                  <p className="muted">Use the working template above to create and save authored standard documents. Saved documents appear below and can still be added to the cancer committee appendix.</p>
                   <div className="button-row">
-                    <input key={`upload-evidence-${selectedHospitalId}-${selectedStandardCode}`} type="file" multiple onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} disabled={role === "auditor"} />
-                    <button onClick={uploadEvidence} disabled={selectedFiles.length === 0 || role === "auditor"}>Upload {selectedFiles.length > 1 ? `${selectedFiles.length} Files` : "Document"}</button>
+                    <button type="button" disabled={role === "auditor"} onClick={startStandardEvidenceTemplate}>
+                      {standardEvidenceDraft ? "Continue Standard Template" : "Start New Supporting Template"}
+                    </button>
+                    <button type="button" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceDraft}>Save Draft</button>
+                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "doc")}>Download .doc</button>
+                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx")}>Download .docx</button>
+                    <button type="button" className="primary" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceTemplate}>Save To Standard Files</button>
                   </div>
+                  <p className="muted">{formatSavedDraftNote(findSavedTemplateDraft(detail, "standard-evidence"))}</p>
                   <div className="list-compact">
                     {detail.uploads.map((item) => (
                       <div key={item.id} className="audit-item">
@@ -1591,69 +2342,6 @@ function App() {
                   </div>
                 </article>
 
-                <article className="section-card full-width-card">
-                  <h3>Add To Cancer Committee Minutes</h3>
-                  <p className="muted">Create the minutes entry for this standard, then use the file-level appendix buttons above to move step documents or standard uploads into the appendix list with an explanation.</p>
-                  <div className="ops-form committee-form">
-                    <input placeholder="Minutes title" value={standardMinutesEntry.title} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, title: e.target.value }))} />
-                    <input type="date" value={standardMinutesEntry.meetingDate} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, meetingDate: e.target.value }))} />
-                    <select value={standardMinutesEntry.quarter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, quarter: e.target.value as CommitteeMeeting["quarter"] }))}>
-                      <option value="Q1">Q1</option>
-                      <option value="Q2">Q2</option>
-                      <option value="Q3">Q3</option>
-                      <option value="Q4">Q4</option>
-                    </select>
-                    <input placeholder="Presenter / owner" value={standardMinutesEntry.presenter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, presenter: e.target.value }))} />
-                    <button disabled={role === "auditor"} onClick={createStandardCommitteeMeeting}>Add This Standard To Minutes</button>
-                  </div>
-                  <textarea placeholder="Agenda summary or action-item notes" value={standardMinutesEntry.notes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, notes: e.target.value }))} />
-                  <textarea placeholder="Formal minutes text" value={standardMinutesEntry.minutes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, minutes: e.target.value }))} />
-                  {standardMinutesEntry.appendices.length > 0 && (
-                    <div className="selection-panel">
-                      <strong>Appendices queued for these minutes</strong>
-                      <div className="appendix-draft-list">
-                        {standardMinutesEntry.appendices.map((appendix) => (
-                          <div key={buildCommitteeAppendixKey(appendix)} className="appendix-draft-item">
-                            <div className="audit-row"><strong>{appendix.label}</strong><span>{appendix.processIndex !== null ? `Step ${appendix.processIndex + 1}` : "Standard upload"}</span></div>
-                            <textarea
-                              placeholder="Explain why this file belongs in the appendix"
-                              value={appendix.explanation}
-                              disabled={role === "auditor"}
-                              onChange={(e) => updateStandardMinutesAppendixExplanation(appendix, e.target.value)}
-                            />
-                            <div className="button-row">
-                              <a href={`http://localhost:4000${appendix.filePath}`} target="_blank" rel="noreferrer">Open file</a>
-                              <button type="button" disabled={role === "auditor"} onClick={() => removeStandardMinutesAppendix(appendix)}>Remove Appendix</button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {detail.uploads.length > 0 && (
-                    <div className="selection-panel">
-                      <strong>Link uploaded files from this standard</strong>
-                      <div className="list-compact roster-reference-list">
-                        {detail.uploads.map((item) => (
-                          <label key={item.id} className={`selection-row ${standardMinutesEntry.referencedUploadIds.includes(item.id) ? "selection-row-active" : ""}`}>
-                            <input
-                              type="checkbox"
-                              checked={standardMinutesEntry.referencedUploadIds.includes(item.id)}
-                              disabled={role === "auditor"}
-                              onChange={(e) => setStandardMinutesEntry((prev) => ({
-                                ...prev,
-                                referencedUploadIds: e.target.checked
-                                  ? [...prev.referencedUploadIds, item.id]
-                                  : prev.referencedUploadIds.filter((entry) => entry !== item.id)
-                              }))}
-                            />
-                            <span>{item.originalName}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </article>
 
                 <article className="section-card full-width-card">
                   <h3>Assignments</h3>
@@ -1720,8 +2408,9 @@ function App() {
               <input placeholder="Deliverable title" value={newPrqItem.title} disabled={role === "auditor"} onChange={(e) => setNewPrqItem((prev) => ({ ...prev, title: e.target.value }))} />
               <input placeholder="Owner" value={newPrqItem.owner} disabled={role === "auditor"} onChange={(e) => setNewPrqItem((prev) => ({ ...prev, owner: e.target.value }))} />
               <input type="date" value={newPrqItem.dueDate} disabled={role === "auditor"} onChange={(e) => setNewPrqItem((prev) => ({ ...prev, dueDate: e.target.value }))} />
-              <button disabled={role === "auditor"} onClick={createPrqWarRoomItem}>Add Item</button>
+              <button disabled={role === "auditor" || !!prqItemValidationMessage} onClick={createPrqWarRoomItem} title={prqItemValidationMessage || "Add strategy item"}>Add Item</button>
             </div>
+            {role !== "auditor" && prqItemValidationMessage && <div className="inline-validation">{prqItemValidationMessage}</div>}
             <textarea placeholder="Notes / missing evidence / blocker details" value={newPrqItem.notes} disabled={role === "auditor"} onChange={(e) => setNewPrqItem((prev) => ({ ...prev, notes: e.target.value }))} />
             <div className="list-compact ops-list">
               {prqWarRoomItems.map((item) => (
@@ -1822,7 +2511,7 @@ function App() {
                     {item.minutes && <div className="muted">Minutes: {item.minutes}</div>}
                     {item.notes && <div className="muted">Notes: {item.notes}</div>}
                     {item.referencedUploadIds.length > 0 && <div className="muted">Linked evidence files: {item.referencedUploadIds.length}</div>}
-                    {item.appendices.length > 0 && <div className="muted">Appendices: {item.appendices.length}</div>}
+                    {item.appendices.length > 0 && <div className="muted">Appendices: {item.appendices.map((appendix) => `${appendix.sourceType === "template-draft" ? "Saved draft" : "File"}: ${appendix.originalName}`).join("; ")}</div>}
                     {referencedAssignments.length > 0 && (
                       <div className="muted">Roles: {referencedAssignments.map((assignment) => `${assignment.roleName} - ${assignment.personName}`).join("; ")}</div>
                     )}
@@ -1845,12 +2534,26 @@ function App() {
             <p className="muted">{registryDashboard?.oncoLensAssistNote ?? "OncoLens automation assists with conference workflow coordination and registry dashboard readiness tracking."}</p>
             {registryDashboard ? (
               <div className="ops-summary-grid">
-                <div className="summary-chip"><strong>Total Standards</strong><span>{registryDashboard.totalStandards}</span></div>                <div className="summary-chip"><strong>Ready for Admin</strong><span>{registryDashboard.readyForAdminStandards}</span></div>
+                <div className="summary-chip"><strong>Total Standards</strong><span>{registryDashboard.totalStandards}</span></div>
+                <div className="summary-chip"><strong>Ready for Admin</strong><span>{registryDashboard.readyForAdminStandards}</span></div>
                 <div className="summary-chip"><strong>Open Assignments</strong><span>{registryDashboard.openAssignments}</span></div>
                 <div className="summary-chip"><strong>No Uploads Yet</strong><span>{registryDashboard.standardsWithoutUploads}</span></div>
                 <div className="summary-chip"><strong>Registry Metrics</strong><span>{registryDashboard.registryMetricCount}</span></div>
+                <div className="summary-chip"><strong>Template Drafts</strong><span>{registryDashboard.templateDraftsSaved}/{registryDashboard.templateDraftsExpected}</span></div>
+                <div className="summary-chip"><strong>Standards Missing Templates</strong><span>{registryDashboard.standardsWithMissingTemplates}</span></div>
                 <div className="summary-chip"><strong>Meetings Planned</strong><span>{registryDashboard.committeeMeetingsPlanned}</span></div>
                 <div className="summary-chip"><strong>Meetings Completed</strong><span>{registryDashboard.committeeMeetingsCompleted}</span></div>
+              </div>
+              <div className="list-compact ops-list">
+                {registryDashboard.templateCoverageByStandard.filter((item) => item.missingDraftCount > 0).map((item) => (
+                  <div key={item.standardCode} className="audit-item">
+                    <div className="audit-row"><strong>{item.standardCode} {item.standardName}</strong><span>{item.savedDraftCount}/{item.expectedDraftCount} saved</span></div>
+                    <div className="muted">Missing: {item.missingItems.join("; ")}</div>
+                  </div>
+                ))}
+                {registryDashboard.templateCoverageByStandard.every((item) => item.missingDraftCount === 0) && (
+                  <div className="empty-state">All standards currently have their required saved template drafts.</div>
+                )}
               </div>
             ) : (
               <div className="empty-state">Registry dashboard is loading.</div>
@@ -1924,15 +2627,21 @@ function App() {
           </div>
         )}
       </main>
+      )}
 
 
       {loading && <div className="loading-indicator">Loading...</div>}
-      {selectedStandard && <footer className="footer">Focused standard: {selectedStandard.code} {selectedStandard.name}</footer>}
+      {!showAnalyzer && selectedStandard && <footer className="footer">Focused standard: {selectedStandard.code} {selectedStandard.name}</footer>}
     </div>
   );
 }
 
 export default App;
+
+
+
+
+
 
 
 

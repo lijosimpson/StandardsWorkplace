@@ -1,0 +1,365 @@
+{
+  "description": "Maps oncology drugs to the companion diagnostic tests they require. Used to flag prescribers likely ordering NGS/IHC tests.",
+  "mappings": [
+    {
+      "drug": "pembrolizumab",
+      "brand": "Keytruda",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/NGS",
+      "biomarkers": ["PD-L1", "TMB", "MSI-H", "dMMR"],
+      "notes": "PD-L1 by IHC required; TMB and MSI-H by NGS for pan-tumor indications"
+    },
+    {
+      "drug": "nivolumab",
+      "brand": "Opdivo",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/NGS",
+      "biomarkers": ["PD-L1", "TMB", "MSI-H", "dMMR"],
+      "notes": "PD-L1 by IHC; TMB and MSI-H by NGS for some indications"
+    },
+    {
+      "drug": "atezolizumab",
+      "brand": "Tecentriq",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC",
+      "biomarkers": ["PD-L1"],
+      "notes": "PD-L1 by IHC (NSCLC, urothelial)"
+    },
+    {
+      "drug": "durvalumab",
+      "brand": "Imfinzi",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC",
+      "biomarkers": ["PD-L1"],
+      "notes": "PD-L1 by IHC for some indications"
+    },
+    {
+      "drug": "cemiplimab",
+      "brand": "Libtayo",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC",
+      "biomarkers": ["PD-L1"],
+      "notes": "PD-L1 by IHC (NSCLC)"
+    },
+    {
+      "drug": "osimertinib",
+      "brand": "Tagrisso",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["EGFR exon 19 del", "EGFR L858R", "EGFR T790M"],
+      "notes": "EGFR mutation testing by NGS or PCR required"
+    },
+    {
+      "drug": "erlotinib",
+      "brand": "Tarceva",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["EGFR exon 19 del", "EGFR L858R"],
+      "notes": "EGFR mutation testing required"
+    },
+    {
+      "drug": "gefitinib",
+      "brand": "Iressa",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["EGFR exon 19 del", "EGFR L858R"],
+      "notes": "EGFR mutation testing required"
+    },
+    {
+      "drug": "afatinib",
+      "brand": "Gilotrif",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["EGFR mutations"],
+      "notes": "EGFR mutation testing required"
+    },
+    {
+      "drug": "dacomitinib",
+      "brand": "Vizimpro",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["EGFR exon 19 del", "EGFR L858R"],
+      "notes": "EGFR mutation testing required"
+    },
+    {
+      "drug": "alectinib",
+      "brand": "Alecensa",
+      "requires_companion_dx": true,
+      "companion_test_type": "FISH/NGS",
+      "biomarkers": ["ALK fusion", "ROS1 fusion"],
+      "notes": "ALK rearrangement by FISH or NGS required"
+    },
+    {
+      "drug": "crizotinib",
+      "brand": "Xalkori",
+      "requires_companion_dx": true,
+      "companion_test_type": "FISH/NGS",
+      "biomarkers": ["ALK fusion", "ROS1 fusion", "MET amplification"],
+      "notes": "ALK or ROS1 by FISH/IHC/NGS required"
+    },
+    {
+      "drug": "ceritinib",
+      "brand": "Zykadia",
+      "requires_companion_dx": true,
+      "companion_test_type": "FISH/NGS",
+      "biomarkers": ["ALK fusion"],
+      "notes": "ALK rearrangement required"
+    },
+    {
+      "drug": "brigatinib",
+      "brand": "Alunbrig",
+      "requires_companion_dx": true,
+      "companion_test_type": "FISH/NGS",
+      "biomarkers": ["ALK fusion"],
+      "notes": "ALK rearrangement required"
+    },
+    {
+      "drug": "lorlatinib",
+      "brand": "Lorbrena",
+      "requires_companion_dx": true,
+      "companion_test_type": "FISH/NGS",
+      "biomarkers": ["ALK fusion"],
+      "notes": "ALK rearrangement required"
+    },
+    {
+      "drug": "capmatinib",
+      "brand": "Tabrecta",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["MET exon 14 skipping"],
+      "notes": "MET exon 14 skipping mutation by NGS required"
+    },
+    {
+      "drug": "tepotinib",
+      "brand": "Tepmetko",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["MET exon 14 skipping"],
+      "notes": "MET exon 14 skipping mutation required"
+    },
+    {
+      "drug": "selpercatinib",
+      "brand": "Retevmo",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["RET fusion", "RET mutation"],
+      "notes": "RET fusion or mutation by NGS required"
+    },
+    {
+      "drug": "pralsetinib",
+      "brand": "Gavreto",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["RET fusion", "RET mutation"],
+      "notes": "RET fusion or mutation required"
+    },
+    {
+      "drug": "dabrafenib",
+      "brand": "Tafinlar",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRAF V600E", "BRAF V600K"],
+      "notes": "BRAF V600 mutation required"
+    },
+    {
+      "drug": "trametinib",
+      "brand": "Mekinist",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRAF V600E", "BRAF V600K"],
+      "notes": "Used with dabrafenib; BRAF V600 required"
+    },
+    {
+      "drug": "vemurafenib",
+      "brand": "Zelboraf",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRAF V600E"],
+      "notes": "BRAF V600E required"
+    },
+    {
+      "drug": "encorafenib",
+      "brand": "Braftovi",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRAF V600E"],
+      "notes": "BRAF V600E required (CRC and melanoma)"
+    },
+    {
+      "drug": "olaparib",
+      "brand": "Lynparza",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRCA1", "BRCA2", "HRR genes"],
+      "notes": "Germline or somatic BRCA1/2 by NGS required; HRR panel for some indications"
+    },
+    {
+      "drug": "niraparib",
+      "brand": "Zejula",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRCA1", "BRCA2", "HRD"],
+      "notes": "BRCA1/2 germline/somatic; HRD testing for some indications"
+    },
+    {
+      "drug": "rucaparib",
+      "brand": "Rubraca",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRCA1", "BRCA2"],
+      "notes": "BRCA1/2 testing required"
+    },
+    {
+      "drug": "talazoparib",
+      "brand": "Talzenna",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["BRCA1", "BRCA2"],
+      "notes": "Germline BRCA1/2 required"
+    },
+    {
+      "drug": "cetuximab",
+      "brand": "Erbitux",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["KRAS wild-type", "NRAS wild-type", "BRAF V600E"],
+      "notes": "RAS wild-type required; BRAF V600E for prognostic value"
+    },
+    {
+      "drug": "panitumumab",
+      "brand": "Vectibix",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["KRAS wild-type", "NRAS wild-type"],
+      "notes": "RAS wild-type required"
+    },
+    {
+      "drug": "trastuzumab",
+      "brand": "Herceptin",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH",
+      "biomarkers": ["HER2 overexpression", "HER2 amplification"],
+      "notes": "HER2 IHC 3+ or FISH amplified required"
+    },
+    {
+      "drug": "pertuzumab",
+      "brand": "Perjeta",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH",
+      "biomarkers": ["HER2 overexpression", "HER2 amplification"],
+      "notes": "HER2 positive by IHC or FISH required"
+    },
+    {
+      "drug": "trastuzumab deruxtecan",
+      "brand": "Enhertu",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH/NGS",
+      "biomarkers": ["HER2 overexpression", "HER2 amplification", "HER2 mutation"],
+      "notes": "HER2 IHC/FISH for breast/gastric; NGS for HER2 mutation in lung/CRC"
+    },
+    {
+      "drug": "trastuzumab emtansine",
+      "brand": "Kadcyla",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH",
+      "biomarkers": ["HER2 overexpression"],
+      "notes": "HER2 positive required"
+    },
+    {
+      "drug": "lapatinib",
+      "brand": "Tykerb",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH",
+      "biomarkers": ["HER2 overexpression"],
+      "notes": "HER2 positive required"
+    },
+    {
+      "drug": "tucatinib",
+      "brand": "Tukysa",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/FISH",
+      "biomarkers": ["HER2 overexpression"],
+      "notes": "HER2 positive required"
+    },
+    {
+      "drug": "larotrectinib",
+      "brand": "Vitrakvi",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["NTRK1 fusion", "NTRK2 fusion", "NTRK3 fusion"],
+      "notes": "NTRK gene fusion by NGS required (tissue-agnostic)"
+    },
+    {
+      "drug": "entrectinib",
+      "brand": "Rozlytrek",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["NTRK fusion", "ROS1 fusion"],
+      "notes": "NTRK or ROS1 fusion by NGS required"
+    },
+    {
+      "drug": "alpelisib",
+      "brand": "Piqray",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["PIK3CA mutation"],
+      "notes": "PIK3CA mutation (tumor or ctDNA) required"
+    },
+    {
+      "drug": "imatinib",
+      "brand": "Gleevec",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS/FISH",
+      "biomarkers": ["BCR-ABL", "c-KIT", "PDGFR"],
+      "notes": "BCR-ABL by PCR/FISH for CML; c-KIT mutation for GIST"
+    },
+    {
+      "drug": "midostaurin",
+      "brand": "Rydapt",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["FLT3 ITD", "FLT3 TKD"],
+      "notes": "FLT3 mutation testing required for AML"
+    },
+    {
+      "drug": "gilteritinib",
+      "brand": "Xospata",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["FLT3 ITD", "FLT3 TKD"],
+      "notes": "FLT3 mutation required"
+    },
+    {
+      "drug": "enasidenib",
+      "brand": "Idhifa",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["IDH2 mutation"],
+      "notes": "IDH2 mutation required"
+    },
+    {
+      "drug": "ivosidenib",
+      "brand": "Tibsovo",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["IDH1 mutation"],
+      "notes": "IDH1 mutation required"
+    },
+    {
+      "drug": "avapritinib",
+      "brand": "Ayvakit",
+      "requires_companion_dx": true,
+      "companion_test_type": "NGS",
+      "biomarkers": ["PDGFRA D842V", "KIT mutation"],
+      "notes": "PDGFRA D842V or KIT mutation by NGS required"
+    },
+    {
+      "drug": "sacituzumab govitecan",
+      "brand": "Trodelvy",
+      "requires_companion_dx": true,
+      "companion_test_type": "IHC/NGS",
+      "biomarkers": ["TROP-2", "HR-negative/HER2-negative"],
+      "notes": "Triple-negative or HR+/HER2- status; PIK3CA mutation for some indications"
+    }
+  ]
+}

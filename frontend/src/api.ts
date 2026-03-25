@@ -7,7 +7,9 @@ import type {
   CommitteePerson,
   AccreditationFramework,
   CustomQualityMetric,
+  DocumentExportFormat,
   Hospital,
+  TemplateDraft,
   PrqWarRoomItem,
   ProcessDocument,
   QualityReferenceDocument,
@@ -17,7 +19,17 @@ import type {
   StandardListItem,
   StandardRoleAssignment,
   UploadItem,
-  UserRole
+  UserRole,
+  NgsLabRecord,
+  OncologyPrescriberRecord,
+  OpenPaymentRecord,
+  MedicaidRecord,
+  NgsLabSummary,
+  PrescriberSummary,
+  OpenPaymentsSummary,
+  ProspectRecord,
+  CrossReferenceResponse,
+  AnalyzerFilters
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:4000/api").replace(/\/$/, "");
@@ -533,8 +545,205 @@ export const api = {
   getAuditorExport: async (hospitalId: string): Promise<AuditorExportResponse> => {
     const res = await fetch(`${API_BASE}/hospitals/${hospitalId}/auditor-export`);
     return parse<AuditorExportResponse>(res);
+  },
+
+  saveTemplateDraft: async (
+    hospitalId: string,
+    standardCode: string,
+    role: UserRole,
+    userName: string,
+    payload: { kind: TemplateDraft["kind"]; processIndex?: number | null; title: string; body: string }
+  ): Promise<TemplateDraft> => {
+    const res = await fetch(`${API_BASE}/hospitals/${hospitalId}/standards/${standardCode}/template-drafts`, {
+      method: "POST",
+      headers: {
+        ...headers(role, userName),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    return parse<TemplateDraft>(res);
+  },
+
+  restoreTemplateDraftRevision: async (
+    hospitalId: string,
+    standardCode: string,
+    draftId: string,
+    revisionId: string,
+    role: UserRole,
+    userName: string
+  ): Promise<TemplateDraft> => {
+    const res = await fetch(`${API_BASE}/hospitals/${hospitalId}/standards/${standardCode}/template-drafts/${draftId}/restore`, {
+      method: "POST",
+      headers: {
+        ...headers(role, userName),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ revisionId })
+    });
+    return parse<TemplateDraft>(res);
+  },
+
+  deleteTemplateDraft: async (
+    hospitalId: string,
+    standardCode: string,
+    draftId: string,
+    role: UserRole,
+    userName: string
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}/hospitals/${hospitalId}/standards/${standardCode}/template-drafts/${draftId}`, {
+      method: "DELETE",
+      headers: headers(role, userName)
+    });
+    if (!res.ok && res.status !== 204) {
+      const err = await res.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(err.error || "Request failed");
+    }
+  },
+
+  exportDocumentTemplate: async (
+    payload: { title: string; body: string; fileName: string; format: DocumentExportFormat }
+  ): Promise<Blob> => {
+    const res = await fetch(`${API_BASE}/document-exports`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Request failed" }));
+      throw new Error(err.error || "Request failed");
+    }
+    return res.blob();
+  },
+
+  // ─── Analyzer API ───────────────────────────────────────────────────────────
+
+  getNgsLabs: async (filters: Partial<AnalyzerFilters> & { page?: number; limit?: number }): Promise<{ data: NgsLabRecord[]; total: number; page: number; pageSize: number }> => {
+    const params = new URLSearchParams();
+    if (filters.year) params.set("year", filters.year);
+    if (filters.state) params.set("state", filters.state);
+    if (filters.category) params.set("category", filters.category);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const res = await fetch(`${API_BASE}/analyzer/ngs-labs?${params}`);
+    return parse(res);
+  },
+
+  getNgsLabsSummary: async (year?: string): Promise<NgsLabSummary> => {
+    const params = year ? `?year=${year}` : "";
+    const res = await fetch(`${API_BASE}/analyzer/ngs-labs/summary${params}`);
+    return parse(res);
+  },
+
+  getOncologyPrescribers: async (filters: Partial<AnalyzerFilters> & { page?: number; limit?: number }): Promise<{ data: OncologyPrescriberRecord[]; total: number; page: number; pageSize: number }> => {
+    const params = new URLSearchParams();
+    if (filters.year) params.set("year", filters.year);
+    if (filters.state) params.set("state", filters.state);
+    if (filters.drug) params.set("drug", filters.drug);
+    if (filters.companionDxOnly) params.set("requires_companion_dx", "true");
+    if (filters.search) params.set("search", filters.search);
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const res = await fetch(`${API_BASE}/analyzer/oncology-prescribers?${params}`);
+    return parse(res);
+  },
+
+  getOncologyPrescribersSummary: async (year?: string): Promise<PrescriberSummary> => {
+    const params = year ? `?year=${year}` : "";
+    const res = await fetch(`${API_BASE}/analyzer/oncology-prescribers/summary${params}`);
+    return parse(res);
+  },
+
+  getOpenPayments: async (filters: Partial<AnalyzerFilters> & { npi?: string; page?: number; limit?: number }): Promise<{ data: OpenPaymentRecord[]; total: number; page: number; pageSize: number }> => {
+    const params = new URLSearchParams();
+    if (filters.year) params.set("year", filters.year);
+    if (filters.state) params.set("state", filters.state);
+    if (filters.drug) params.set("drug", filters.drug);
+    if ((filters as any).npi) params.set("npi", (filters as any).npi);
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const res = await fetch(`${API_BASE}/analyzer/open-payments?${params}`);
+    return parse(res);
+  },
+
+  getOpenPaymentsSummary: async (year?: string): Promise<OpenPaymentsSummary> => {
+    const params = year ? `?year=${year}` : "";
+    const res = await fetch(`${API_BASE}/analyzer/open-payments/summary${params}`);
+    return parse(res);
+  },
+
+  getMedicaidUtilization: async (filters: Partial<AnalyzerFilters> & { page?: number; limit?: number }): Promise<{ data: MedicaidRecord[]; total: number; page: number; pageSize: number }> => {
+    const params = new URLSearchParams();
+    if (filters.year) params.set("year", filters.year);
+    if (filters.state) params.set("state", filters.state);
+    if (filters.drug) params.set("drug", filters.drug);
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    const res = await fetch(`${API_BASE}/analyzer/medicaid?${params}`);
+    return parse(res);
+  },
+
+  getCrossReference: async (npi: string): Promise<CrossReferenceResponse> => {
+    const res = await fetch(`${API_BASE}/analyzer/cross-reference?npi=${encodeURIComponent(npi)}`);
+    return parse(res);
+  },
+
+  getProspectList: async (filters: { state?: string; drug?: string; minClaims?: string; year?: string }): Promise<{ prospects: ProspectRecord[]; total: number }> => {
+    const params = new URLSearchParams();
+    if (filters.state) params.set("state", filters.state);
+    if (filters.drug) params.set("drug", filters.drug);
+    if (filters.minClaims) params.set("min_claims", filters.minClaims);
+    if (filters.year) params.set("year", filters.year);
+    const res = await fetch(`${API_BASE}/analyzer/prospect-list?${params}`);
+    return parse(res);
+  },
+
+  downloadAnalyzerCsv: async (endpoint: "ngs-labs" | "oncology-prescribers" | "open-payments" | "medicaid", filters: Record<string, string>): Promise<void> => {
+    const params = new URLSearchParams({ format: "csv", limit: "10000" });
+    Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+    const res = await fetch(`${API_BASE}/analyzer/${endpoint}?${params}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Download failed" }));
+      throw new Error(err.error || "Download failed");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${endpoint}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  },
+
+  downloadProspectListCsv: async (filters: { state?: string; drug?: string; minClaims?: string; year?: string }): Promise<void> => {
+    const params = new URLSearchParams({ format: "csv" });
+    if (filters.state) params.set("state", filters.state);
+    if (filters.drug) params.set("drug", filters.drug);
+    if (filters.minClaims) params.set("min_claims", filters.minClaims);
+    if (filters.year) params.set("year", filters.year);
+    const res = await fetch(`${API_BASE}/analyzer/prospect-list?${params}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Download failed" }));
+      throw new Error(err.error || "Download failed");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "prospect-list.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 };
+
+
 
 
 

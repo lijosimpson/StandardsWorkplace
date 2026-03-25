@@ -3,8 +3,10 @@ import express, { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import multer from "multer";
+import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { AccreditationFramework, standards, StandardDefinition, standardRoleLists } from "./standards";
 import { loadPersistedData, savePersistedData } from "./lib/persistence";
+import { supabaseAdmin, isSupabaseConfigured } from "./lib/supabase";
 
 type StandardStatus = "in-progress" | "ready-for-admin" | "locked";
 type UserRole = "admin" | "owner" | "staff" | "auditor";
@@ -72,6 +74,44 @@ interface ProcessDocument {
   uploadedAt: string;
   uploadedBy: string;
 }
+type TemplateDraftKind = "standard-evidence" | "committee-appendix" | "process-step";
+
+interface TemplateDraftRevision {
+  id: string;
+  title: string;
+  body: string;
+  savedAt: string;
+  savedBy: string;
+}
+
+interface TemplateDraft {
+  id: string;
+  hospitalId: string;
+  standardCode: string;
+  kind: TemplateDraftKind;
+  processIndex: number | null;
+  title: string;
+  body: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
+  revisionHistory: TemplateDraftRevision[];
+}
+
+interface TemplateCoverageItem {
+  kind: TemplateDraftKind;
+  label: string;
+  processIndex: number | null;
+  hasSavedDraft: boolean;
+  savedDraftId: string | null;
+}
+
+interface TemplateCoverageSummary {
+  expectedDraftCount: number;
+  savedDraftCount: number;
+  items: TemplateCoverageItem[];
+}
 interface QualityReferenceDocument {
   id: string;
   hospitalId: string;
@@ -106,7 +146,7 @@ interface RoleAttendanceEntry {
 }
 
 interface CommitteeMeetingAppendixInput {
-  sourceType: "upload" | "process-document";
+  sourceType: "upload" | "process-document" | "template-draft";
   sourceId: string;
   explanation: string;
 }
@@ -117,6 +157,7 @@ interface CommitteeMeetingAppendix extends CommitteeMeetingAppendixInput {
   originalName: string;
   filePath: string;
   processIndex: number | null;
+  templateDraftKind: TemplateDraftKind | null;
 }
 
 interface CommitteeMeeting {
@@ -214,6 +255,7 @@ interface PersistedData {
   auditLog: AuditLogEntry[];
   assignments: AssignmentItem[];
   uploads: UploadItem[];
+  templateDrafts: TemplateDraft[];
   customQualityMetrics: CustomQualityMetric[];
   processDocuments: ProcessDocument[];
   qualityReferenceDocuments: QualityReferenceDocument[];
@@ -228,6 +270,15 @@ interface PersistedData {
 interface RequestContext {
   userName: string;
   userRole: UserRole;
+}
+
+type DocumentExportFormat = "doc" | "docx";
+
+interface DocumentExportPayload {
+  title?: string;
+  body?: string;
+  fileName?: string;
+  format?: DocumentExportFormat;
 }
 
 const app = express();
@@ -294,6 +345,7 @@ const stateStore = new Map<string, StandardState>();
 let auditLog: AuditLogEntry[] = [];
 let assignments: AssignmentItem[] = [];
 let uploads: UploadItem[] = [];
+let templateDrafts: TemplateDraft[] = [];
 let customQualityMetrics: CustomQualityMetric[] = [];
 let processDocuments: ProcessDocument[] = [];
 let qualityReferenceDocuments: QualityReferenceDocument[] = [];
@@ -334,6 +386,55 @@ const getContext = (req: Request): RequestContext => {
 
 const getDefinition = (standardCode: string): StandardDefinition | undefined =>
   standards.find((entry) => entry.code === standardCode);
+
+const sanitizeDocumentFileStem = (value: string): string => {
+  const cleaned = String(value || "document")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "document";
+};
+
+const escapeHtml = (value: string): string => String(value || "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;")
+  .replace(/'/g, "&#39;");
+
+const buildWordCompatibleHtml = (title: string, body: string): string => `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body { font-family: Calibri, Arial, sans-serif; color: #1f2937; margin: 36px; }
+      h1 { font-size: 18pt; margin-bottom: 8px; }
+      p.meta { color: #4b5563; margin: 0 0 18px; }
+      pre { white-space: pre-wrap; word-break: break-word; font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.45; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(title)}</h1>
+    <p class="meta">Generated ${escapeHtml(new Date().toLocaleString())}</p>
+    <pre>${escapeHtml(body)}</pre>
+  </body>
+</html>`;
+
+const buildDocxBuffer = async (title: string, body: string): Promise<Buffer> => {
+  const children = [
+    new Paragraph({ text: title, heading: HeadingLevel.HEADING_1 }),
+    new Paragraph({ children: [new TextRun(`Generated ${new Date().toLocaleString()}`)] }),
+    ...body.split(/\r?\n/).map((line) => new Paragraph({ children: [new TextRun(line.length > 0 ? line : " ")] }))
+  ];
+
+  const doc = new Document({
+    sections: [{ children }]
+  });
+
+  return Packer.toBuffer(doc);
+};
+
 const makeDefaultMetricLabels = (standardCode: string, count: number): string[] =>
   Array.from({ length: count }, (_, idx) => `Program-defined metric ${idx + 1} (${standardCode})`);
 const currentLocalDate = (): string => {
@@ -778,6 +879,7 @@ const buildCommitteeMeetingAppendices = (
       originalName: uploadItem.originalName,
       filePath: uploadItem.filePath,
       processIndex: null,
+      templateDraftKind: null,
       explanation
     });
   };
@@ -791,6 +893,21 @@ const buildCommitteeMeetingAppendices = (
       originalName: doc.originalName,
       filePath: doc.filePath,
       processIndex: doc.processIndex,
+      templateDraftKind: null,
+      explanation
+    });
+  };
+
+  const addTemplateDraftAppendix = (draft: TemplateDraft, explanation: string) => {
+    appendixMap.set(`template-draft:${draft.id}`, {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      sourceType: "template-draft",
+      sourceId: draft.id,
+      standardCode: draft.standardCode,
+      originalName: draft.title,
+      filePath: "",
+      processIndex: draft.processIndex,
+      templateDraftKind: draft.kind,
       explanation
     });
   };
@@ -799,7 +916,13 @@ const buildCommitteeMeetingAppendices = (
     appendices.forEach((item) => {
       if (!item || typeof item !== "object") return;
       const entry = item as Partial<CommitteeMeetingAppendixInput>;
-      const sourceType = entry.sourceType === "process-document" ? "process-document" : entry.sourceType === "upload" ? "upload" : null;
+      const sourceType = entry.sourceType === "process-document"
+        ? "process-document"
+        : entry.sourceType === "template-draft"
+          ? "template-draft"
+          : entry.sourceType === "upload"
+            ? "upload"
+            : null;
       const sourceId = String(entry.sourceId || "").trim();
       const explanation = String(entry.explanation || "").trim();
       if (!sourceType || !sourceId) return;
@@ -810,8 +933,14 @@ const buildCommitteeMeetingAppendices = (
         return;
       }
 
-      const doc = processDocuments.find((candidate) => candidate.hospitalId === hospitalId && candidate.id === sourceId);
-      if (doc) addProcessDocAppendix(doc, explanation);
+      if (sourceType === "process-document") {
+        const doc = processDocuments.find((candidate) => candidate.hospitalId === hospitalId && candidate.id === sourceId);
+        if (doc) addProcessDocAppendix(doc, explanation);
+        return;
+      }
+
+      const draft = templateDrafts.find((candidate) => candidate.hospitalId === hospitalId && candidate.id === sourceId);
+      if (draft) addTemplateDraftAppendix(draft, explanation);
     });
   }
 
@@ -825,12 +954,86 @@ const buildCommitteeMeetingAppendices = (
   return Array.from(appendixMap.values());
 };
 
+const templateDraftKindOrder: Record<TemplateDraftKind, number> = {
+  "standard-evidence": 0,
+  "committee-appendix": 1,
+  "process-step": 2
+};
+
+const isTemplateDraftKind = (value: unknown): value is TemplateDraftKind =>
+  value === "standard-evidence" || value === "committee-appendix" || value === "process-step";
+
+const sortTemplateDrafts = (items: TemplateDraft[]): TemplateDraft[] =>
+  [...items].sort((left, right) => {
+    const kindDelta = templateDraftKindOrder[left.kind] - templateDraftKindOrder[right.kind];
+    if (kindDelta !== 0) return kindDelta;
+    return (left.processIndex ?? -1) - (right.processIndex ?? -1);
+  });
+
+const getTemplateDraftsForStandard = (hospitalId: string, standardCode: string): TemplateDraft[] =>
+  sortTemplateDrafts(templateDrafts.filter((item) => item.hospitalId === hospitalId && item.standardCode === standardCode));
+
+const buildTemplateDraftRevisionSnapshot = (draft: Pick<TemplateDraft, "title" | "body" | "updatedAt" | "updatedBy">): TemplateDraftRevision => ({
+  id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+  title: draft.title,
+  body: draft.body,
+  savedAt: draft.updatedAt,
+  savedBy: draft.updatedBy
+});
+
+const buildTemplateCoverage = (
+  hospitalId: string,
+  definition: StandardDefinition,
+  state: StandardState
+): TemplateCoverageSummary => {
+  const processSteps = getEffectiveHospitalProcess(definition, state);
+  const savedDrafts = getTemplateDraftsForStandard(hospitalId, definition.code);
+  const findSavedDraft = (kind: TemplateDraftKind, processIndex: number | null = null) =>
+    savedDrafts.find((item) => item.kind === kind && item.processIndex === processIndex);
+
+  const standardEvidenceDraft = findSavedDraft("standard-evidence");
+  const committeeAppendixDraft = findSavedDraft("committee-appendix");
+  const items: TemplateCoverageItem[] = [
+    {
+      kind: "standard-evidence",
+      label: "Standard working evidence",
+      processIndex: null,
+      hasSavedDraft: Boolean(standardEvidenceDraft),
+      savedDraftId: standardEvidenceDraft?.id || null
+    },
+    {
+      kind: "committee-appendix",
+      label: "Cancer committee appendix",
+      processIndex: null,
+      hasSavedDraft: Boolean(committeeAppendixDraft),
+      savedDraftId: committeeAppendixDraft?.id || null
+    },
+    ...processSteps.map((step, index) => {
+      const savedDraft = findSavedDraft("process-step", index);
+      return {
+        kind: "process-step" as const,
+        label: `Step ${index + 1}: ${step}`,
+        processIndex: index,
+        hasSavedDraft: Boolean(savedDraft),
+        savedDraftId: savedDraft?.id || null
+      };
+    })
+  ];
+
+  return {
+    expectedDraftCount: items.length,
+    savedDraftCount: items.filter((item) => item.hasSavedDraft).length,
+    items
+  };
+};
+
 const persist = async () => {
   const payload: PersistedData = {
     stateEntries: Array.from(stateStore.entries()).map(([key, value]) => ({ key, value })),
     auditLog,
     assignments,
     uploads,
+    templateDrafts,
     customQualityMetrics,
     processDocuments,
     qualityReferenceDocuments,
@@ -897,6 +1100,36 @@ const loadPersisted = async () => {
   auditLog = parsed.auditLog || [];
   assignments = parsed.assignments || [];
   uploads = parsed.uploads || [];
+  templateDrafts = ((parsed as any).templateDrafts || [])
+    .map((item: Partial<TemplateDraft>) => {
+      const kind = isTemplateDraftKind(item.kind) ? item.kind : "standard-evidence";
+      const normalizedProcessIndex = kind === "process-step" && Number.isInteger(item.processIndex)
+        ? Number(item.processIndex)
+        : null;
+      return {
+        id: String(item.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
+        hospitalId: String(item.hospitalId || ""),
+        standardCode: String(item.standardCode || ""),
+        kind,
+        processIndex: normalizedProcessIndex,
+        title: String(item.title || ""),
+        body: String(item.body || ""),
+        createdAt: String(item.createdAt || item.updatedAt || new Date().toISOString()),
+        createdBy: String(item.createdBy || item.updatedBy || "system"),
+        updatedAt: String(item.updatedAt || item.createdAt || new Date().toISOString()),
+        updatedBy: String(item.updatedBy || item.createdBy || "system"),
+        revisionHistory: Array.isArray((item as any).revisionHistory)
+          ? ((item as any).revisionHistory as Array<Partial<TemplateDraftRevision>>).map((revision) => ({
+              id: String(revision.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
+              title: String(revision.title || ""),
+              body: String(revision.body || ""),
+              savedAt: String(revision.savedAt || new Date().toISOString()),
+              savedBy: String(revision.savedBy || "system")
+            })).filter((revision) => revision.title.trim() || revision.body.trim())
+          : []
+      };
+    })
+    .filter((item: TemplateDraft) => item.hospitalId && item.standardCode && item.title.trim() && item.body.trim());
   customQualityMetrics = (parsed.customQualityMetrics || []).map((item) => ({ ...item, framework: normalizeAccreditationFramework(item.framework) }));
   processDocuments = (parsed as any).processDocuments || [];
   qualityReferenceDocuments = (parsed as any).qualityReferenceDocuments || [];
@@ -1041,6 +1274,30 @@ app.get("/api/hospitals", (_req: Request, res: Response) => {
   res.json(hospitals);
 });
 
+app.post("/api/document-exports", async (req: Request, res: Response) => {
+  const { title, body, fileName, format } = req.body as DocumentExportPayload;
+  const safeTitle = String(title || "CoC Template").trim() || "CoC Template";
+  const safeBody = String(body || "").trim();
+  const selectedFormat: DocumentExportFormat = format === "docx" ? "docx" : "doc";
+  const fileStem = sanitizeDocumentFileStem(fileName || safeTitle);
+
+  if (!safeBody) return res.status(400).json({ error: "Document body is required" });
+
+  if (selectedFormat === "docx") {
+    const buffer = await buildDocxBuffer(safeTitle, safeBody);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename=${fileStem}.docx`);
+    return res.send(buffer);
+  }
+
+  const html = buildWordCompatibleHtml(safeTitle, safeBody);
+  res.setHeader("Content-Type", "application/msword");
+  res.setHeader("Content-Disposition", `attachment; filename=${fileStem}.doc`);
+  return res.send(html);
+});
+
+
+
 app.get("/api/hospitals/:hospitalId/standards", (req: Request, res: Response) => {
   const hospital = hospitals.find((h) => h.id === req.params.hospitalId);
   if (!hospital) return res.status(404).json({ error: "Hospital not found" });
@@ -1087,10 +1344,150 @@ app.get("/api/hospitals/:hospitalId/standards/:standardCode", (req: Request, res
     qualityMetricLibrary: qualityMetricLibraryByCategory[definition.category] || [],
     customQualityMetrics: customQualityMetrics.filter((m) => m.hospitalId === hospital.id && m.standardCode === definition.code),
     processDocuments: processDocuments.filter((d) => d.hospitalId === hospital.id && d.standardCode === definition.code),
+    templateDrafts: getTemplateDraftsForStandard(hospital.id, definition.code),
+    templateCoverage: buildTemplateCoverage(hospital.id, definition, state),
     roleList: getRoleListForStandard(hospital.id, definition.code),
     roleAssignments: standardRoleAssignments.filter((entry) => entry.hospitalId === hospital.id && entry.standardCode === definition.code),
     quarterlyEvidence: quarterlyEvidence.filter((entry) => entry.hospitalId === hospital.id && entry.standardCode === definition.code)
   });
+});
+
+app.post("/api/hospitals/:hospitalId/standards/:standardCode/template-drafts", async (req: Request, res: Response) => {
+  const context = getContext(req);
+  if (context.userRole === "auditor") return res.status(403).json({ error: "Auditors have read-only access" });
+
+  const hospital = hospitals.find((h) => h.id === req.params.hospitalId);
+  if (!hospital) return res.status(404).json({ error: "Hospital not found" });
+
+  const definition = getDefinition(req.params.standardCode);
+  if (!definition) return res.status(404).json({ error: "Standard not found" });
+
+  const { kind, processIndex, title, body } = req.body as {
+    kind?: TemplateDraftKind;
+    processIndex?: number | null;
+    title?: string;
+    body?: string;
+  };
+
+  if (!isTemplateDraftKind(kind)) {
+    return res.status(400).json({ error: "Invalid template draft type" });
+  }
+
+  const trimmedTitle = String(title || "").trim();
+  const trimmedBody = String(body || "").trim();
+  if (!trimmedTitle || !trimmedBody) {
+    return res.status(400).json({ error: "Template drafts require a title and body" });
+  }
+
+  const state = ensureState(req.params.hospitalId, definition.code);
+  const hospitalProcess = getEffectiveHospitalProcess(definition, state);
+  const normalizedProcessIndex = kind === "process-step"
+    ? (Number.isInteger(processIndex) ? Number(processIndex) : -1)
+    : null;
+
+  if (kind === "process-step") {
+    if (normalizedProcessIndex === null || normalizedProcessIndex < 0 || normalizedProcessIndex >= hospitalProcess.length) {
+      return res.status(400).json({ error: "Invalid process step index for template draft" });
+    }
+  }
+
+  const existingIndex = templateDrafts.findIndex((item) =>
+    item.hospitalId === req.params.hospitalId
+    && item.standardCode === definition.code
+    && item.kind === kind
+    && item.processIndex === normalizedProcessIndex
+  );
+  const timestamp = new Date().toISOString();
+  const existing = existingIndex >= 0 ? templateDrafts[existingIndex] : null;
+  const draft: TemplateDraft = {
+    id: existing?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    hospitalId: req.params.hospitalId,
+    standardCode: definition.code,
+    kind,
+    processIndex: normalizedProcessIndex,
+    title: trimmedTitle,
+    body: trimmedBody,
+    createdAt: existing?.createdAt || timestamp,
+    createdBy: existing?.createdBy || context.userName,
+    updatedAt: timestamp,
+    updatedBy: context.userName,
+    revisionHistory: existing
+      ? [buildTemplateDraftRevisionSnapshot(existing), ...existing.revisionHistory].slice(0, 20)
+      : []
+  };
+
+  if (existingIndex >= 0) {
+    templateDrafts[existingIndex] = draft;
+  } else {
+    templateDrafts.unshift(draft);
+  }
+
+  addAuditLog(
+    req.params.hospitalId,
+    definition.code,
+    existing ? "template-draft-updated" : "template-draft-created",
+    `${kind}${normalizedProcessIndex !== null ? ` step ${normalizedProcessIndex + 1}` : ""}: ${trimmedTitle}`,
+    context
+  );
+  await persist();
+
+  return res.json(draft);
+});
+
+app.post("/api/hospitals/:hospitalId/standards/:standardCode/template-drafts/:draftId/restore", async (req: Request, res: Response) => {
+  const context = getContext(req);
+  if (context.userRole === "auditor") return res.status(403).json({ error: "Auditors have read-only access" });
+
+  const definition = getDefinition(req.params.standardCode);
+  if (!definition) return res.status(404).json({ error: "Standard not found" });
+
+  const draft = templateDrafts.find((item) => item.id === req.params.draftId && item.hospitalId === req.params.hospitalId && item.standardCode === definition.code);
+  if (!draft) return res.status(404).json({ error: "Template draft not found" });
+
+  const revisionId = String((req.body as { revisionId?: string }).revisionId || "").trim();
+  const revisionIndex = draft.revisionHistory.findIndex((item) => item.id === revisionId);
+  if (revisionIndex < 0) return res.status(404).json({ error: "Template draft revision not found" });
+
+  const revision = draft.revisionHistory[revisionIndex];
+  const currentSnapshot = buildTemplateDraftRevisionSnapshot(draft);
+  draft.title = revision.title;
+  draft.body = revision.body;
+  draft.updatedAt = new Date().toISOString();
+  draft.updatedBy = context.userName;
+  draft.revisionHistory = [currentSnapshot, ...draft.revisionHistory.filter((item) => item.id !== revisionId)].slice(0, 20);
+
+  addAuditLog(req.params.hospitalId, definition.code, "template-draft-restored", `${draft.kind}${draft.processIndex !== null ? ` step ${draft.processIndex + 1}` : ""}: ${draft.title}`, context);
+  await persist();
+  return res.json(draft);
+});
+
+app.delete("/api/hospitals/:hospitalId/standards/:standardCode/template-drafts/:draftId", async (req: Request, res: Response) => {
+  const context = getContext(req);
+  if (context.userRole === "auditor") return res.status(403).json({ error: "Auditors have read-only access" });
+
+  const definition = getDefinition(req.params.standardCode);
+  if (!definition) return res.status(404).json({ error: "Standard not found" });
+
+  const existingIndex = templateDrafts.findIndex((item) => item.id === req.params.draftId && item.hospitalId === req.params.hospitalId && item.standardCode === definition.code);
+  if (existingIndex < 0) return res.status(404).json({ error: "Template draft not found" });
+
+  const [deletedDraft] = templateDrafts.splice(existingIndex, 1);
+  committeeMeetings = committeeMeetings.map((meeting) => {
+    if (meeting.hospitalId !== req.params.hospitalId) return meeting;
+    const nextAppendices = meeting.appendices.filter((appendix) => !(appendix.sourceType === "template-draft" && appendix.sourceId === deletedDraft.id));
+    return nextAppendices.length === meeting.appendices.length
+      ? meeting
+      : {
+          ...meeting,
+          appendices: nextAppendices,
+          updatedAt: new Date().toISOString(),
+          updatedBy: context.userName
+        };
+  });
+
+  addAuditLog(req.params.hospitalId, definition.code, "template-draft-deleted", `${deletedDraft.kind}${deletedDraft.processIndex !== null ? ` step ${deletedDraft.processIndex + 1}` : ""}: ${deletedDraft.title}`, context);
+  await persist();
+  return res.status(204).send();
 });
 
 app.post("/api/hospitals/:hospitalId/standards/:standardCode/metrics", (req: Request, res: Response) => {
@@ -2021,7 +2418,14 @@ app.delete("/api/hospitals/:hospitalId/standards/:standardCode/role-assignments/
 app.get("/api/hospitals/:hospitalId/committee-meetings", (req: Request, res: Response) => {
   const hospital = hospitals.find((h) => h.id === req.params.hospitalId);
   if (!hospital) return res.status(404).json({ error: "Hospital not found" });
-  return res.json(committeeMeetings.filter((item) => item.hospitalId === hospital.id));
+  return res.json(
+    committeeMeetings
+      .filter((item) => item.hospitalId === hospital.id)
+      .map((item) => ({
+        ...item,
+        appendices: buildCommitteeMeetingAppendices(hospital.id, item.appendices, item.referencedUploadIds)
+      }))
+  );
 });
 
 app.post("/api/hospitals/:hospitalId/committee-meetings", (req: Request, res: Response) => {
@@ -2068,7 +2472,7 @@ app.post("/api/hospitals/:hospitalId/committee-meetings", (req: Request, res: Re
   syncStandard23CommitteeMeetingState(hospital.id, context.userName);
   addAuditLog(hospital.id, "GLOBAL", "committee-meeting-created", item.title, context);
   persist();
-  return res.status(201).json(item);
+  return res.status(201).json({ ...item, appendices: buildCommitteeMeetingAppendices(hospital.id, item.appendices, item.referencedUploadIds) });
 });
 
 app.patch("/api/hospitals/:hospitalId/committee-meetings/:meetingId", (req: Request, res: Response) => {
@@ -2107,7 +2511,7 @@ app.patch("/api/hospitals/:hospitalId/committee-meetings/:meetingId", (req: Requ
   syncStandard23CommitteeMeetingState(req.params.hospitalId, context.userName);
   addAuditLog(req.params.hospitalId, "GLOBAL", "committee-meeting-updated", found.title, context);
   persist();
-  return res.json(found);
+  return res.json({ ...found, appendices: buildCommitteeMeetingAppendices(req.params.hospitalId, found.appendices, found.referencedUploadIds) });
 });
 
 app.delete("/api/hospitals/:hospitalId/committee-meetings/:meetingId", (req: Request, res: Response) => {
@@ -2132,6 +2536,23 @@ app.get("/api/hospitals/:hospitalId/registry-dashboard", (req: Request, res: Res
   const openAssignments = assignments.filter((item) => item.hospitalId === hospital.id && item.status === "open").length;
   const registryMetricCount = customQualityMetrics.filter((item) => item.hospitalId === hospital.id && standards.find((s) => s.code === item.standardCode)?.category === "Registry").length;
   const committeeSlice = committeeMeetings.filter((item) => item.hospitalId === hospital.id);
+  const templateCoverageByStandard = hospitalStandards.map(({ definition, state }) => {
+    const coverage = buildTemplateCoverage(hospital.id, definition, state);
+    const missingItems = coverage.items.filter((item) => !item.hasSavedDraft).map((item) => item.label);
+    return {
+      standardCode: definition.code,
+      standardName: definition.name,
+      category: definition.category,
+      expectedDraftCount: coverage.expectedDraftCount,
+      savedDraftCount: coverage.savedDraftCount,
+      missingDraftCount: coverage.expectedDraftCount - coverage.savedDraftCount,
+      completionPercent: coverage.expectedDraftCount === 0 ? 100 : Math.round((coverage.savedDraftCount / coverage.expectedDraftCount) * 100),
+      missingItems
+    };
+  });
+  const templateDraftsExpected = templateCoverageByStandard.reduce((sum, item) => sum + item.expectedDraftCount, 0);
+  const templateDraftsSaved = templateCoverageByStandard.reduce((sum, item) => sum + item.savedDraftCount, 0);
+  const standardsWithMissingTemplates = templateCoverageByStandard.filter((item) => item.missingDraftCount > 0).length;
   return res.json({
     hospital,
     totalStandards: hospitalStandards.length,
@@ -2142,6 +2563,10 @@ app.get("/api/hospitals/:hospitalId/registry-dashboard", (req: Request, res: Res
     registryMetricCount,
     committeeMeetingsPlanned: committeeSlice.filter((item) => item.status === "planned" || item.status === "agenda-ready").length,
     committeeMeetingsCompleted: committeeSlice.filter((item) => item.status === "held" || item.status === "minutes-uploaded" || item.status === "closed").length,
+    templateDraftsExpected,
+    templateDraftsSaved,
+    standardsWithMissingTemplates,
+    templateCoverageByStandard,
     oncoLensAssistNote: "OncoLens automation assists with conference workflow coordination and registry dashboard readiness tracking."
   });
 });
@@ -2201,6 +2626,407 @@ app.delete("/api/hospitals/:hospitalId/quality-reference-docs/:docId", (req: Req
 
   return res.status(204).send();
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// ANALYZER ROUTES — NGS/IHC Labs, Oncology Prescribers, Open Payments, Medicaid
+// These endpoints query the Supabase analyzer tables loaded by the ETL pipeline.
+// All routes return 503 when Supabase is not configured.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function analyzerNotAvailable(res: Response): void {
+  (res as any).status(503).json({ error: "Analyzer data not available. Supabase must be configured and ETL pipeline must be run first." });
+}
+
+function buildCsvFromRows(rows: Record<string, unknown>[]): string {
+  if (rows.length === 0) return "";
+  const headers = Object.keys(rows[0]);
+  const lines = [headers.join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((h) => {
+      const v = row[h];
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(","));
+  }
+  return lines.join("\n");
+}
+
+// GET /api/analyzer/ngs-labs
+app.get("/api/analyzer/ngs-labs", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year, state, code, category, search, page = "1", limit = "50", format } = req.query as Record<string, string>;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = format === "csv" ? Math.min(10000, parseInt(limit, 10) || 10000) : Math.min(500, parseInt(limit, 10) || 50);
+  const offset = format === "csv" ? 0 : (pageNum - 1) * pageSize;
+
+  let query = supabaseAdmin.from("ngs_lab_utilization").select("*", { count: "exact" });
+
+  if (year) query = query.eq("year", parseInt(year, 10));
+  if (state) query = query.eq("nppes_provider_state", state.toUpperCase());
+  if (code) query = query.eq("hcpcs_code", code);
+  if (category) query = query.eq("test_category", category.toUpperCase());
+  if (search) {
+    const s = search.trim();
+    query = query.or(`provider_last_name.ilike.%${s}%,nppes_provider_city.ilike.%${s}%,npi.eq.${s}`);
+  }
+
+  query = query.order("line_srvc_cnt", { ascending: false }).range(offset, offset + pageSize - 1);
+
+  const { data, error, count } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  if (format === "csv") {
+    (res as any).setHeader("Content-Type", "text/csv");
+    (res as any).setHeader("Content-Disposition", "attachment; filename=ngs_labs.csv");
+    return (res as any).send(buildCsvFromRows((data || []) as Record<string, unknown>[]));
+  }
+
+  return (res as any).json({ data, total: count, page: pageNum, pageSize });
+});
+
+// GET /api/analyzer/ngs-labs/summary
+app.get("/api/analyzer/ngs-labs/summary", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year } = req.query as Record<string, string>;
+  let q = supabaseAdmin.from("ngs_lab_utilization").select("*");
+  if (year) q = q.eq("year", parseInt(year, 10));
+
+  const { data, error } = await q;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const rows = (data || []) as Array<Record<string, any>>;
+
+  // Top 10 labs by total services
+  const labTotals = new Map<string, { npi: string; name: string; state: string; total: number }>();
+  const stateTotals = new Map<string, number>();
+  const codeTotals = new Map<string, number>();
+  const categoryTotals = new Map<string, number>();
+
+  for (const row of rows) {
+    const npi = row.npi;
+    const name = row.provider_last_name || row.npi;
+    const state = row.nppes_provider_state || "?";
+    const svc = parseFloat(row.line_srvc_cnt || "0");
+
+    const lab = labTotals.get(npi) || { npi, name, state, total: 0 };
+    lab.total += svc;
+    labTotals.set(npi, lab);
+
+    stateTotals.set(state, (stateTotals.get(state) || 0) + svc);
+    codeTotals.set(row.hcpcs_code, (codeTotals.get(row.hcpcs_code) || 0) + svc);
+    categoryTotals.set(row.test_category, (categoryTotals.get(row.test_category) || 0) + svc);
+  }
+
+  const topLabs = [...labTotals.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+  const byState = [...stateTotals.entries()].sort((a, b) => b[1] - a[1]).map(([state, total]) => ({ state, total }));
+  const byCode = [...codeTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([code, total]) => ({ code, total }));
+  const byCategory = [...categoryTotals.entries()].map(([category, total]) => ({ category, total }));
+
+  return (res as any).json({ totalRows: rows.length, topLabs, byState, byCode, byCategory });
+});
+
+// GET /api/analyzer/oncology-prescribers
+app.get("/api/analyzer/oncology-prescribers", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year, state, drug, requires_companion_dx, search, page = "1", limit = "50", format } = req.query as Record<string, string>;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = format === "csv" ? Math.min(10000, parseInt(limit, 10) || 10000) : Math.min(500, parseInt(limit, 10) || 50);
+  const offset = format === "csv" ? 0 : (pageNum - 1) * pageSize;
+
+  let query = supabaseAdmin.from("oncology_drug_prescribers").select("*", { count: "exact" });
+
+  if (year) query = query.eq("year", parseInt(year, 10));
+  if (state) query = query.eq("nppes_provider_state", state.toUpperCase());
+  if (drug) query = query.ilike("drug_name", `%${drug}%`);
+  if (requires_companion_dx === "true") query = query.eq("requires_companion_dx", true);
+  if (search) {
+    const s = search.trim();
+    query = query.or(`nppes_provider_last_org_name.ilike.%${s}%,nppes_provider_first_name.ilike.%${s}%,npi.eq.${s}`);
+  }
+
+  query = query.order("total_claim_count", { ascending: false }).range(offset, offset + pageSize - 1);
+
+  const { data, error, count } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  if (format === "csv") {
+    (res as any).setHeader("Content-Type", "text/csv");
+    (res as any).setHeader("Content-Disposition", "attachment; filename=oncology_prescribers.csv");
+    return (res as any).send(buildCsvFromRows((data || []) as Record<string, unknown>[]));
+  }
+
+  return (res as any).json({ data, total: count, page: pageNum, pageSize });
+});
+
+// GET /api/analyzer/oncology-prescribers/summary
+app.get("/api/analyzer/oncology-prescribers/summary", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year } = req.query as Record<string, string>;
+  let q = supabaseAdmin.from("oncology_drug_prescribers").select("*");
+  if (year) q = q.eq("year", parseInt(year, 10));
+
+  const { data, error } = await q;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const rows = (data || []) as Array<Record<string, any>>;
+
+  const prescriberTotals = new Map<string, { npi: string; name: string; state: string; claims: number; drugs: Set<string>; hasCompanion: boolean }>();
+  const drugTotals = new Map<string, { drug: string; claims: number; requires_companion_dx: boolean }>();
+  const stateTotals = new Map<string, number>();
+
+  for (const row of rows) {
+    const npi = row.npi;
+    const name = `${row.nppes_provider_first_name || ""} ${row.nppes_provider_last_org_name || ""}`.trim() || npi;
+    const state = row.nppes_provider_state || "?";
+    const claims = parseInt(row.total_claim_count || "0", 10);
+
+    const p = prescriberTotals.get(npi) || { npi, name, state, claims: 0, drugs: new Set<string>(), hasCompanion: false };
+    p.claims += claims;
+    p.drugs.add(row.drug_name);
+    if (row.requires_companion_dx) p.hasCompanion = true;
+    prescriberTotals.set(npi, p);
+
+    const drug = row.drug_name;
+    const d = drugTotals.get(drug) || { drug, claims: 0, requires_companion_dx: row.requires_companion_dx };
+    d.claims += claims;
+    drugTotals.set(drug, d);
+
+    stateTotals.set(state, (stateTotals.get(state) || 0) + claims);
+  }
+
+  const topPrescribers = [...prescriberTotals.values()]
+    .sort((a, b) => b.claims - a.claims)
+    .slice(0, 10)
+    .map((p) => ({ ...p, drugCount: p.drugs.size, drugs: [...p.drugs] }));
+
+  const byDrug = [...drugTotals.values()].sort((a, b) => b.claims - a.claims).slice(0, 20);
+  const byState = [...stateTotals.entries()].sort((a, b) => b[1] - a[1]).map(([state, total]) => ({ state, total }));
+  const companionDxCount = [...prescriberTotals.values()].filter((p) => p.hasCompanion).length;
+
+  return (res as any).json({ totalRows: rows.length, topPrescribers, byDrug, byState, companionDxCount });
+});
+
+// GET /api/analyzer/open-payments
+app.get("/api/analyzer/open-payments", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year, state, npi, drug, page = "1", limit = "50", format } = req.query as Record<string, string>;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = format === "csv" ? Math.min(10000, parseInt(limit, 10) || 10000) : Math.min(500, parseInt(limit, 10) || 50);
+  const offset = format === "csv" ? 0 : (pageNum - 1) * pageSize;
+
+  let query = supabaseAdmin.from("open_payments_oncology").select("*", { count: "exact" });
+
+  if (year) query = query.eq("year", parseInt(year, 10));
+  if (state) query = query.eq("recipient_state", state.toUpperCase());
+  if (npi) query = query.eq("physician_npi", npi);
+  if (drug) query = query.ilike("drug_name", `%${drug}%`);
+
+  query = query.order("total_amount_usd", { ascending: false }).range(offset, offset + pageSize - 1);
+
+  const { data, error, count } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  if (format === "csv") {
+    (res as any).setHeader("Content-Type", "text/csv");
+    (res as any).setHeader("Content-Disposition", "attachment; filename=open_payments.csv");
+    return (res as any).send(buildCsvFromRows((data || []) as Record<string, unknown>[]));
+  }
+
+  return (res as any).json({ data, total: count, page: pageNum, pageSize });
+});
+
+// GET /api/analyzer/open-payments/summary
+app.get("/api/analyzer/open-payments/summary", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year } = req.query as Record<string, string>;
+  let q = supabaseAdmin.from("open_payments_oncology").select("*");
+  if (year) q = q.eq("year", parseInt(year, 10));
+
+  const { data, error } = await q;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const rows = (data || []) as Array<Record<string, any>>;
+
+  const physicianTotals = new Map<string, { npi: string; name: string; state: string; total: number; payments: number }>();
+  const manufacturerTotals = new Map<string, number>();
+  const drugTotals = new Map<string, number>();
+  const natureTotals = new Map<string, number>();
+
+  for (const row of rows) {
+    const npi = row.physician_npi || "unknown";
+    const name = `${row.physician_first_name || ""} ${row.physician_last_name || ""}`.trim() || npi;
+    const amount = parseFloat(row.total_amount_usd || "0");
+
+    const p = physicianTotals.get(npi) || { npi, name, state: row.recipient_state || "?", total: 0, payments: 0 };
+    p.total += amount;
+    p.payments++;
+    physicianTotals.set(npi, p);
+
+    const mfr = row.manufacturer_name || "Unknown";
+    manufacturerTotals.set(mfr, (manufacturerTotals.get(mfr) || 0) + amount);
+
+    const drug = row.drug_name || "Other";
+    drugTotals.set(drug, (drugTotals.get(drug) || 0) + amount);
+
+    const nature = row.nature_of_payment || "Other";
+    natureTotals.set(nature, (natureTotals.get(nature) || 0) + 1);
+  }
+
+  const topKols = [...physicianTotals.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+  const byManufacturer = [...manufacturerTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, total]) => ({ name, total }));
+  const byDrug = [...drugTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([drug, total]) => ({ drug, total }));
+  const byNature = [...natureTotals.entries()].sort((a, b) => b[1] - a[1]).map(([nature, count]) => ({ nature, count }));
+  const totalAmount = [...physicianTotals.values()].reduce((s, p) => s + p.total, 0);
+
+  return (res as any).json({ totalRows: rows.length, totalAmount, topKols, byManufacturer, byDrug, byNature });
+});
+
+// GET /api/analyzer/medicaid
+app.get("/api/analyzer/medicaid", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { year, state, drug, page = "1", limit = "50", format } = req.query as Record<string, string>;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = format === "csv" ? Math.min(10000, parseInt(limit, 10) || 10000) : Math.min(500, parseInt(limit, 10) || 50);
+  const offset = format === "csv" ? 0 : (pageNum - 1) * pageSize;
+
+  let query = supabaseAdmin.from("medicaid_drug_utilization").select("*", { count: "exact" });
+
+  if (year) query = query.eq("year", parseInt(year, 10));
+  if (state) query = query.eq("state_code", state.toUpperCase());
+  if (drug) query = query.ilike("drug_name", `%${drug}%`);
+
+  query = query.order("total_amount_reimbursed", { ascending: false }).range(offset, offset + pageSize - 1);
+
+  const { data, error, count } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  if (format === "csv") {
+    (res as any).setHeader("Content-Type", "text/csv");
+    (res as any).setHeader("Content-Disposition", "attachment; filename=medicaid_utilization.csv");
+    return (res as any).send(buildCsvFromRows((data || []) as Record<string, unknown>[]));
+  }
+
+  return (res as any).json({ data, total: count, page: pageNum, pageSize });
+});
+
+// GET /api/analyzer/cross-reference?npi=
+// Given a prescriber NPI → returns their Part D drugs + Open Payments
+app.get("/api/analyzer/cross-reference", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { npi } = req.query as Record<string, string>;
+  if (!npi) return (res as any).status(400).json({ error: "npi query parameter is required" });
+
+  const [prescriptions, payments] = await Promise.all([
+    supabaseAdmin.from("oncology_drug_prescribers").select("*").eq("npi", npi).order("year", { ascending: false }),
+    supabaseAdmin.from("open_payments_oncology").select("*").eq("physician_npi", npi).order("total_amount_usd", { ascending: false })
+  ]);
+
+  if (prescriptions.error) return (res as any).status(500).json({ error: prescriptions.error.message });
+
+  const providerInfo = prescriptions.data?.[0] || null;
+
+  return (res as any).json({
+    npi,
+    provider: providerInfo ? {
+      name: `${providerInfo.nppes_provider_first_name || ""} ${providerInfo.nppes_provider_last_org_name || ""}`.trim(),
+      city: providerInfo.nppes_provider_city,
+      state: providerInfo.nppes_provider_state,
+      specialty: providerInfo.provider_type
+    } : null,
+    prescriptions: prescriptions.data || [],
+    openPayments: payments.data || []
+  });
+});
+
+// GET /api/analyzer/prospect-list?state=&drug=&min_claims=
+// High-value prospects: oncologists prescribing companion-dx drugs in a given state
+app.get("/api/analyzer/prospect-list", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { state, drug, min_claims = "10", year, format } = req.query as Record<string, string>;
+  const minClaims = parseInt(min_claims, 10) || 10;
+
+  let query = supabaseAdmin
+    .from("oncology_drug_prescribers")
+    .select("npi, nppes_provider_first_name, nppes_provider_last_org_name, nppes_provider_city, nppes_provider_state, nppes_provider_zip5, nppes_credentials, provider_type, drug_name, generic_name, companion_test_type, total_claim_count, total_drug_cost, bene_count, requires_companion_dx, year")
+    .eq("requires_companion_dx", true)
+    .gte("total_claim_count", minClaims);
+
+  if (state) query = query.eq("nppes_provider_state", state.toUpperCase());
+  if (drug) query = query.ilike("drug_name", `%${drug}%`);
+  if (year) query = query.eq("year", parseInt(year, 10));
+
+  query = query.order("total_claim_count", { ascending: false }).limit(500);
+
+  const { data, error } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const rows = (data || []) as Array<Record<string, any>>;
+
+  // Aggregate by NPI: sum claims across drugs
+  type ProspectEntry = {
+    npi: string; name: string; city: string; state: string; zip: string;
+    credentials: string; specialty: string; totalClaims: number; totalCost: number;
+    drugs: Array<{ drug: string; companion_test: string; claims: number }>;
+  };
+  const byNpi = new Map<string, ProspectEntry>();
+
+  for (const row of rows) {
+    const npi = row.npi;
+    const name = `${row.nppes_provider_first_name || ""} ${row.nppes_provider_last_org_name || ""}`.trim() || npi;
+    const existing: ProspectEntry = byNpi.get(npi) ?? {
+      npi, name,
+      city: row.nppes_provider_city || "",
+      state: row.nppes_provider_state || "",
+      zip: row.nppes_provider_zip5 || "",
+      credentials: row.nppes_credentials || "",
+      specialty: row.provider_type || "",
+      totalClaims: 0,
+      totalCost: 0,
+      drugs: [] as Array<{ drug: string; companion_test: string; claims: number }>
+    };
+    existing.totalClaims += parseInt(row.total_claim_count || "0", 10);
+    existing.totalCost += parseFloat(row.total_drug_cost || "0");
+    existing.drugs.push({
+      drug: row.drug_name,
+      companion_test: row.companion_test_type || "",
+      claims: parseInt(row.total_claim_count || "0", 10)
+    });
+    byNpi.set(npi, existing);
+  }
+
+  const prospects = [...byNpi.values()].sort((a, b) => b.totalClaims - a.totalClaims);
+
+  if (format === "csv") {
+    const flat = prospects.map((p) => ({
+      npi: p.npi,
+      name: p.name,
+      city: p.city,
+      state: p.state,
+      zip: p.zip,
+      credentials: p.credentials,
+      specialty: p.specialty,
+      total_claims: p.totalClaims,
+      total_drug_cost: p.totalCost.toFixed(2),
+      companion_dx_drugs: p.drugs.map((d) => d.drug).join("; "),
+      companion_tests_required: [...new Set(p.drugs.map((d) => d.companion_test))].join("; ")
+    }));
+    (res as any).setHeader("Content-Type", "text/csv");
+    (res as any).setHeader("Content-Disposition", "attachment; filename=prospect_list.csv");
+    return (res as any).send(buildCsvFromRows(flat as Record<string, unknown>[]));
+  }
+
+  return (res as any).json({ prospects, total: prospects.length });
+});
+
 if (!isServerlessRuntime) {
   app.listen(port, () => {
     console.log(`CoC backend listening on port ${port}`);
@@ -2208,6 +3034,10 @@ if (!isServerlessRuntime) {
 }
 
 export default app;
+
+
+
+
 
 
 

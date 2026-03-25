@@ -1,0 +1,24 @@
+{
+  "name": "coc-analyzer-etl",
+  "version": "1.0.0",
+  "description": "ETL pipeline to download and load Medicare/Medicaid/Open Payments data into Supabase",
+  "scripts": {
+    "download": "ts-node downloadData.ts",
+    "process:partb": "ts-node processPartB.ts",
+    "process:partd": "ts-node processPartD.ts",
+    "process:payments": "ts-node processOpenPayments.ts",
+    "process:medicaid": "ts-node processMedicaid.ts",
+    "upload": "ts-node uploadToSupabase.ts",
+    "run": "ts-node run.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "axios": "^1.7.0",
+    "csv-parse": "^5.5.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "description": "CPT codes for Immunohistochemistry (IHC) and Fluorescence In Situ Hybridization (FISH) tests",
+  "codes": [
+    { "code": "88341", "label": "Immunohistochemistry, each additional single antibody stain procedure" },
+    { "code": "88342", "label": "Immunohistochemistry or immunocytochemistry, per specimen; initial single antibody stain procedure" },
+    { "code": "88344", "label": "Immunohistochemistry or immunocytochemistry, each multiplex antibody stain procedure" },
+    { "code": "88360", "label": "Morphometric analysis, tumor immunohistochemistry (e.g., Her-2/neu, estrogen receptor/progesterone receptor)" },
+    { "code": "88361", "label": "Morphometric analysis, tumor immunohistochemistry, computer-assisted, each additional antibody stain procedure" },
+    { "code": "88271", "label": "Molecular cytogenetics; DNA probe, each (FISH)" },
+    { "code": "88272", "label": "Molecular cytogenetics; chromosomal in situ hybridization, analyze 3-5 cells" },
+    { "code": "88273", "label": "Molecular cytogenetics; chromosomal in situ hybridization, analyze 10-30 cells" },
+    { "code": "88274", "label": "Molecular cytogenetics; interphase in situ hybridization, analyze 25-99 cells" },
+    { "code": "88275", "label": "Molecular cytogenetics; interphase in situ hybridization, analyze 100-300 cells" },
+    { "code": "88280", "label": "Chromosome analysis; additional karyotypes, each study" },
+    { "code": "88291", "label": "Cytogenetics and molecular cytogenetics, interpretation and report" }
+  ]
+}

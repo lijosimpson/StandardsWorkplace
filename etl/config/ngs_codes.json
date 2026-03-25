@@ -1,0 +1,22 @@
+{
+  "description": "CPT codes for Next-Generation Sequencing (NGS) molecular pathology tests",
+  "codes": [
+    { "code": "81445", "label": "Targeted genomic sequence analysis panel, solid organ neoplasm, DNA" },
+    { "code": "81450", "label": "Targeted genomic sequence analysis panel, hematolymphoid neoplasm" },
+    { "code": "81451", "label": "Targeted genomic sequence analysis panel, hematolymphoid neoplasm, DNA and RNA" },
+    { "code": "81455", "label": "Targeted genomic sequence analysis panel, solid organ neoplasm, DNA and RNA" },
+    { "code": "81479", "label": "Unlisted molecular pathology procedure (includes broad-panel NGS)" },
+    { "code": "81518", "label": "Oncology (breast), mRNA gene expression profiling" },
+    { "code": "81519", "label": "Oncology (breast), mRNA, gene expression profiling by real-time RT-PCR of 21 genes (Oncotype DX)" },
+    { "code": "81520", "label": "Oncology (breast), mRNA, gene expression profiling, 58 genes (Prosigna/PAM50)" },
+    { "code": "81521", "label": "Oncology (breast), mRNA, gene expression profiling (EndoPredict)" },
+    { "code": "81522", "label": "Oncology (breast), mRNA, gene expression profiling (Breast Cancer Index)" },
+    { "code": "81529", "label": "Oncology (cutaneous melanoma), mRNA gene expression profiling, 31 genes" },
+    { "code": "81540", "label": "Oncology (tumor of unknown origin), mRNA gene expression profiling" },
+    { "code": "81541", "label": "Oncology (prostate), mRNA, expression profiling of 46 genes (Decipher)" },
+    { "code": "81551", "label": "Oncology (prostate), promoter methylation profiling by real-time PCR, 3 genes" },
+    { "code": "81552", "label": "Oncology (uveal melanoma), mRNA, gene expression profiling, 15 genes" },
+    { "code": "81554", "label": "Oncology (prostate), mRNA, expression profiling of 17 genes (Prolaris)" },
+    { "code": "81599", "label": "Unlisted multianalyte assay with algorithmic analysis" }
+  ]
+}
