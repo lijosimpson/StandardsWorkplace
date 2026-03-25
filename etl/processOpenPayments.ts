@@ -30,11 +30,17 @@ const oncologyDrugTerms = oncologyDrugsConfig.drugs.map((d) => d.toLowerCase().t
 
 function isOncologyPayment(row: Record<string, string>): boolean {
   // Check all 5 drug/device name fields in Open Payments
+  // Column name changed in 2025 CMS release from Name_of_Associated_Covered_Drug_or_BiologicalN
+  // to Name_of_Drug_or_Biological_or_Device_or_Medical_Supply_N
   for (let i = 1; i <= 5; i++) {
-    const field = row[`Name_of_Associated_Covered_Drug_or_Biological${i}`]
+    const field = row[`Name_of_Drug_or_Biological_or_Device_or_Medical_Supply_${i}`]
+      || row[`Name_of_Associated_Covered_Drug_or_Biological${i}`]
       || row[`name_of_associated_covered_drug_or_biological${i}`]
       || "";
     if (!field.trim()) continue;
+    // Skip device/supply rows — only match drugs and biologicals
+    const category = (row[`Indicate_Drug_or_Biological_or_Device_or_Medical_Supply_${i}`] || "").toLowerCase();
+    if (category && !category.includes("drug") && !category.includes("biological")) continue;
     const normalized = field.toLowerCase().trim();
     for (const drug of oncologyDrugTerms) {
       if (normalized.includes(drug) || drug.includes(normalized)) return true;
@@ -45,7 +51,8 @@ function isOncologyPayment(row: Record<string, string>): boolean {
 
 function getFirstDrugName(row: Record<string, string>): string {
   for (let i = 1; i <= 5; i++) {
-    const field = row[`Name_of_Associated_Covered_Drug_or_Biological${i}`]
+    const field = row[`Name_of_Drug_or_Biological_or_Device_or_Medical_Supply_${i}`]
+      || row[`Name_of_Associated_Covered_Drug_or_Biological${i}`]
       || row[`name_of_associated_covered_drug_or_biological${i}`]
       || "";
     if (field.trim()) return field.trim();
