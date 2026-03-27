@@ -20,6 +20,8 @@ import type {
   StandardDetailResponse,
   StandardListItem,
   StandardRoleAssignment,
+  TemplateDraft,
+  TemplateDraftRevision,
   UploadItem,
   AccreditationFramework,
   UserRole
@@ -825,7 +827,7 @@ function App() {
     }
   };
 
-  const uploadEvidence = async () => {
+  const _uploadEvidence = async () => {
     if (!detail || !selectedHospitalId || selectedFiles.length === 0 || role === "auditor") return;
 
     try {
@@ -958,7 +960,7 @@ function App() {
     }
   };
 
-  const uploadProcessDoc = async (processIndex: number) => {
+  const _uploadProcessDoc = async (processIndex: number) => {
     if (!detail || !selectedHospitalId || role === "auditor") return;
     const file = processDocFiles[processIndex];
     if (!file) return;
@@ -1498,7 +1500,7 @@ function App() {
     if (!draft || draft.revisionHistory.length === 0) return null;
     return (
       <div className="list-compact">
-        {draft.revisionHistory.map((revision) => (
+        {draft.revisionHistory.map((revision: TemplateDraftRevision) => (
           <div key={revision.id} className="audit-item">
             <div className="audit-row"><strong>Previous version</strong><span>{new Date(revision.savedAt).toLocaleString()}</span></div>
             <div className="muted">Saved by {revision.savedBy}</div>
@@ -1796,7 +1798,7 @@ function App() {
                       const hidden = !!detail.state.processHiddenSteps?.[key];
                       const qChecks = detail.state.processQuarterChecks?.[key] || {};
                       const stepDocs = (detail.processDocuments || []).filter((d) => d.processIndex === idx);
-                      const pendingFile = processDocFiles[idx];
+                      const _pendingFile = processDocFiles[idx];
                       const displayedStepLabel = getDisplayedProcessStepLabel(step, idx);
                       return (
                         <div key={idx} className={`process-step-card ${hidden ? "process-step-hidden" : ""}`}>

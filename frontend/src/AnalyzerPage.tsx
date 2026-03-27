@@ -18,7 +18,6 @@ import type {
   HospitalSearchResult,
   HospitalProvider,
   HospitalNetwork,
-  HospitalLabRecord,
   PartBServiceRecord,
   AcoMembership,
   OrderReferringStatus
@@ -373,7 +372,7 @@ function PrescribersTab({ year, state, search, onCrossRef }: { year: string; sta
 // Open Payments / KOLs Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
-function OpenPaymentsTab({ year, state, search, onCrossRef }: { year: string; state: string; search: string; onCrossRef: (npi: string) => void }) {
+function OpenPaymentsTab({ year, state, onCrossRef }: { year: string; state: string; search: string; onCrossRef: (npi: string) => void }) {
   const [rows, setRows] = useState<OpenPaymentRecord[]>([]);
   const [summary, setSummary] = useState<OpenPaymentsSummary | null>(null);
   const [total, setTotal] = useState(0);
