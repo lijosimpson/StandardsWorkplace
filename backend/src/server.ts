@@ -1,3 +1,4 @@
+import "dotenv/config";
 import cors from "cors";
 import express, { Request, Response } from "express";
 import fs from "fs";
@@ -7,6 +8,7 @@ import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { AccreditationFramework, standards, StandardDefinition, standardRoleLists } from "./standards";
 import { loadPersistedData, savePersistedData } from "./lib/persistence";
 import { supabaseAdmin, isSupabaseConfigured } from "./lib/supabase";
+import { inferCancerTypesWithYears } from "./cancerMaps";
 
 type StandardStatus = "in-progress" | "ready-for-admin" | "locked";
 type UserRole = "admin" | "owner" | "staff" | "auditor";
@@ -2667,8 +2669,10 @@ app.get("/api/analyzer/ngs-labs", async (req: Request, res: Response) => {
   if (code) query = query.eq("hcpcs_code", code);
   if (category) query = query.eq("test_category", category.toUpperCase());
   if (search) {
-    const s = search.trim();
-    query = query.or(`provider_last_name.ilike.%${s}%,nppes_provider_city.ilike.%${s}%,npi.eq.${s}`);
+    const terms = search.trim().split(/\s+/).filter(Boolean);
+    for (const term of terms) {
+      query = query.or(`provider_last_name.ilike.%${term}%,provider_first_name.ilike.%${term}%,npi.eq.${term}`);
+    }
   }
 
   query = query.order("line_srvc_cnt", { ascending: false }).range(offset, offset + pageSize - 1);
@@ -2743,8 +2747,10 @@ app.get("/api/analyzer/oncology-prescribers", async (req: Request, res: Response
   if (drug) query = query.ilike("drug_name", `%${drug}%`);
   if (requires_companion_dx === "true") query = query.eq("requires_companion_dx", true);
   if (search) {
-    const s = search.trim();
-    query = query.or(`nppes_provider_last_org_name.ilike.%${s}%,nppes_provider_first_name.ilike.%${s}%,npi.eq.${s}`);
+    const terms = search.trim().split(/\s+/).filter(Boolean);
+    for (const term of terms) {
+      query = query.or(`nppes_provider_last_org_name.ilike.%${term}%,nppes_provider_first_name.ilike.%${term}%,npi.eq.${term}`);
+    }
   }
 
   query = query.order("total_claim_count", { ascending: false }).range(offset, offset + pageSize - 1);
@@ -2825,6 +2831,12 @@ app.get("/api/analyzer/open-payments", async (req: Request, res: Response) => {
   if (state) query = query.eq("recipient_state", state.toUpperCase());
   if (npi) query = query.eq("physician_npi", npi);
   if (drug) query = query.ilike("drug_name", `%${drug}%`);
+  if ((req.query as any).search) {
+    const terms = ((req.query as any).search as string).trim().split(/\s+/).filter(Boolean);
+    for (const term of terms) {
+      query = query.or(`physician_last_name.ilike.%${term}%,physician_first_name.ilike.%${term}%,physician_npi.eq.${term}`);
+    }
+  }
 
   query = query.order("total_amount_usd", { ascending: false }).range(offset, offset + pageSize - 1);
 
@@ -2932,6 +2944,38 @@ app.get("/api/analyzer/cross-reference", async (req: Request, res: Response) => 
   if (prescriptions.error) return (res as any).status(500).json({ error: prescriptions.error.message });
 
   const providerInfo = prescriptions.data?.[0] || null;
+  const providerState = providerInfo?.nppes_provider_state || null;
+
+  // Find NGS/IHC labs in the same state — best proxy for labs this prescriber might use.
+  // Medicare Part B records billing lab NPI only; ordering physician is not captured.
+  // Filter to test categories relevant to the companion-dx tests this prescriber's drugs require.
+  const companionTestTypes = new Set(
+    (prescriptions.data || [])
+      .filter((r: any) => r.companion_test_type)
+      .map((r: any) => (r.companion_test_type as string).toUpperCase())
+  );
+  const needsNgs = [...companionTestTypes].some((t) => t.includes("NGS"));
+  const needsIhc = [...companionTestTypes].some((t) => t.includes("IHC"));
+  const needsFish = [...companionTestTypes].some((t) => t.includes("FISH"));
+
+  let ngsLabsQuery = supabaseAdmin
+    .from("ngs_lab_utilization")
+    .select("npi, provider_last_name, provider_first_name, nppes_provider_city, nppes_provider_state, hcpcs_code, hcpcs_description, test_category, line_srvc_cnt, bene_unique_cnt, year")
+    .order("line_srvc_cnt", { ascending: false })
+    .limit(25);
+
+  if (providerState) ngsLabsQuery = ngsLabsQuery.eq("nppes_provider_state", providerState);
+
+  // If we know what test types are needed, filter to those categories
+  if (needsNgs || needsIhc || needsFish) {
+    const cats: string[] = [];
+    if (needsNgs) cats.push("NGS");
+    if (needsIhc) cats.push("IHC");
+    if (needsFish) cats.push("FISH");
+    ngsLabsQuery = ngsLabsQuery.in("test_category", cats);
+  }
+
+  const { data: ngsLabsData } = await ngsLabsQuery;
 
   return (res as any).json({
     npi,
@@ -2942,7 +2986,8 @@ app.get("/api/analyzer/cross-reference", async (req: Request, res: Response) => 
       specialty: providerInfo.provider_type
     } : null,
     prescriptions: prescriptions.data || [],
-    openPayments: payments.data || []
+    openPayments: payments.data || [],
+    ngsLabs: ngsLabsData || []
   });
 });
 
@@ -3025,6 +3070,769 @@ app.get("/api/analyzer/prospect-list", async (req: Request, res: Response) => {
   }
 
   return (res as any).json({ prospects, total: prospects.length });
+});
+
+// ─── Collaboration Network Endpoints ────────────────────────────────────────
+
+// GET /api/analyzer/collaboration/search?q=name&state=&year=
+// Search for oncology providers by name or NPI
+app.get("/api/analyzer/collaboration/search", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { q, state, year = "2023" } = req.query as Record<string, string>;
+  if (!q || q.trim().length < 2) return (res as any).json({ providers: [] });
+
+  let query = supabaseAdmin
+    .from("oncology_drug_prescribers")
+    .select("npi, nppes_provider_first_name, nppes_provider_last_org_name, nppes_provider_city, nppes_provider_state, provider_type")
+    .eq("year", parseInt(year, 10))
+    .limit(200);
+
+  if (state) query = query.eq("nppes_provider_state", state.toUpperCase());
+
+  const terms = q.trim().split(/\s+/).filter(Boolean);
+  for (const term of terms) {
+    query = query.or(`nppes_provider_last_org_name.ilike.%${term}%,nppes_provider_first_name.ilike.%${term}%,npi.eq.${term}`);
+  }
+
+  const { data, error } = await query;
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const seen = new Set<string>();
+  const providers = (data || [])
+    .filter((r: any) => { if (seen.has(r.npi)) return false; seen.add(r.npi); return true; })
+    .map((r: any) => ({
+      npi: r.npi,
+      name: `${r.nppes_provider_first_name || ""} ${r.nppes_provider_last_org_name || ""}`.trim(),
+      city: r.nppes_provider_city,
+      state: r.nppes_provider_state,
+      specialty: r.provider_type
+    }));
+
+  return (res as any).json({ providers });
+});
+
+// ─── Collaboration helpers ──────────────────────────────────────────────────
+
+// Maps specialty string or HCPCS codes to a canonical type
+function classifySpecialtyType(specialty: string, hcpcsCodes: string[] = []): string {
+  const s = (specialty || "").toUpperCase();
+  if (s.includes("RADIATION ONCOLOGY") || (s.includes("RADIATION") && !s.includes("RADIOLOGY"))) return "radiation";
+  if (s.includes("SURGICAL ONCOLOGY") || s.includes("GYNECOLOGIC ONCOLOGY") || s.includes("BREAST SURGICAL")) return "surgery";
+  if (s.includes("PATHOLOGY")) return "pathology";
+  if (s.includes("RADIOLOGY") || s.includes("NUCLEAR MEDICINE") || s.includes("INTERVENTIONAL RADIOLOGY")) return "radiology";
+  if ((s.includes("HEMATOLOGY") && s.includes("ONCOLOGY")) || s.includes("MEDICAL ONCOLOGY")) return "oncology";
+  if (s.includes("HEMATOLOGY")) return "hematology";
+  if (s.includes("ONCOLOGY")) return "oncology";
+  if (s.includes("SURGERY") || s.includes("SURGICAL")) return "surgery";
+  const codes = hcpcsCodes || [];
+  if (codes.some(h => h >= "88000" && h <= "88899")) return "pathology";
+  if (codes.some(h => h >= "77000" && h <= "77799")) return "radiation";
+  if (codes.some(h => (h >= "70000" && h <= "76999") || (h >= "79000" && h <= "79999"))) return "radiology";
+  if (codes.some(h => (h >= "19000" && h <= "19499") || (h >= "38000" && h <= "38999"))) return "surgery";
+  if (codes.some(h => h >= "96000" && h <= "96999")) return "oncology";
+  if (codes.some(h => h >= "85000" && h <= "85999")) return "hematology";
+  return "other";
+}
+
+// Relevance of each specialty to an oncology care team
+const SPECIALTY_AFFINITY: Record<string, number> = {
+  pathology: 0.90, radiation: 0.90, surgery: 0.85,
+  radiology: 0.80, hematology: 0.75, oncology: 0.70, other: 0.40,
+};
+
+// GET /api/analyzer/collaboration/network?npi=NPI&year=2023
+// Returns cross-specialty care team network for a given provider NPI
+// Specialties: oncology, hematology, radiation, surgery, pathology, radiology
+app.get("/api/analyzer/collaboration/network", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { npi, year = "2023", focal_city, focal_state, focal_zip } = req.query as Record<string, string>;
+  if (!npi) return (res as any).status(400).json({ error: "npi is required" });
+
+  // 1. Fetch focal provider data in parallel
+  const [focalRxResult, focalPaymentsResult, focalGroupResult, focalProfileResult] = await Promise.all([
+    supabaseAdmin.from("oncology_drug_prescribers").select("*").eq("npi", npi).order("year", { ascending: false }),
+    supabaseAdmin.from("open_payments_oncology").select("*").eq("physician_npi", npi).order("total_amount_usd", { ascending: false }),
+    supabaseAdmin.from("physician_group_affiliations").select("group_pac_id, group_name, specialty").eq("npi", npi).limit(1),
+    supabaseAdmin.from("oncology_provider_profiles").select("year, hcpcs_codes").eq("npi", npi).order("year", { ascending: true })
+  ]);
+
+  if (focalRxResult.error) return (res as any).status(500).json({ error: focalRxResult.error.message });
+
+  const allFocalRx = (focalRxResult.data || []) as Array<Record<string, any>>;
+  const yearRx = allFocalRx.filter((r) => r.year === parseInt(year, 10));
+
+  if (allFocalRx.length === 0) return (res as any).status(404).json({ error: "Provider not found in oncology prescriber data" });
+
+  const focalInfo = allFocalRx[0];
+  const focalDrugs = [...new Set(yearRx.map((r) => r.drug_name).filter(Boolean))] as string[];
+  const focalState = focalInfo.nppes_provider_state;
+  const focalCity = (focalInfo.nppes_provider_city || "").trim();
+  const focalZip = focalInfo.nppes_provider_zip5;
+  const focalTotalBenes = yearRx.reduce((s: number, r: any) => s + parseInt(r.bene_count || "0", 10), 0);
+
+  const effectiveCity = focal_city || focalCity;
+  const effectiveState = focal_state || focalState;
+  const effectiveZip = focal_zip || focalZip;
+
+  const focalGroupPacId = focalGroupResult.data?.[0]?.group_pac_id ?? null;
+  const focalProfiles = (focalProfileResult.data || []) as Array<{ year: number; hcpcs_codes: string[] }>;
+  // Use most recent year's HCPCS for overlap queries; keep all years for cancer inference
+  const focalHcpcs: string[] = focalProfiles.length > 0
+    ? focalProfiles[focalProfiles.length - 1].hcpcs_codes ?? []
+    : [];
+  const focalHcpcsRecords = focalProfiles.flatMap(p =>
+    (p.hcpcs_codes || []).map(code => ({ code, year: p.year }))
+  );
+  const focalSpecialtyType = classifySpecialtyType(focalInfo.provider_type || "", focalHcpcs);
+
+  // Cancer type inference for focal provider (year-annotated)
+  const focalDrugRecords = allFocalRx
+    .filter((r: any) => r.drug_name)
+    .map((r: any) => ({ drug: r.drug_name as string, year: r.year as number }));
+  const focalCancerTypes = inferCancerTypesWithYears(focalDrugRecords, focalHcpcsRecords);
+
+  // 2a. Drug peers (same drugs, same year)
+  let peersQuery = supabaseAdmin
+    .from("oncology_drug_prescribers")
+    .select("npi, nppes_provider_first_name, nppes_provider_last_org_name, nppes_provider_city, nppes_provider_state, nppes_provider_zip5, provider_type, drug_name, total_claim_count, bene_count")
+    .eq("year", parseInt(year, 10))
+    .neq("npi", npi)
+    .order("total_claim_count", { ascending: false });
+  if (focalDrugs.length > 0) peersQuery = peersQuery.in("drug_name", focalDrugs.slice(0, 20));
+
+  // 2b. Same-group peers (exact group PAC ID match)
+  const groupQuery = focalGroupPacId
+    ? supabaseAdmin.from("physician_group_affiliations")
+        .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id, group_name")
+        .eq("group_pac_id", focalGroupPacId).neq("npi", npi).limit(200)
+    : Promise.resolve({ data: [] as any[] });
+
+  // 2c. HCPCS-overlap peers
+  const hcpcsQuery = focalHcpcs.length > 0
+    ? supabaseAdmin.from("oncology_provider_profiles")
+        .select("npi, hcpcs_codes").overlaps("hcpcs_codes", focalHcpcs).neq("npi", npi).limit(500)
+    : Promise.resolve({ data: [] as any[] });
+
+  // 2d. Cross-specialty geographic peers — all oncology-related providers in same city
+  //     Captures radiation oncologists, surgical oncologists, gynecologic oncologists.
+  //     After re-running processDac with broader keywords, also captures pathologists & radiologists.
+  const geoQuery = effectiveCity && effectiveState
+    ? supabaseAdmin.from("physician_group_affiliations")
+        .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
+        .ilike("provider_city", effectiveCity).eq("provider_state", effectiveState).neq("npi", npi).limit(500)
+    : Promise.resolve({ data: [] as any[] });
+
+  const [peersResult, groupResult, hcpcsResult, geoResult] = await Promise.all([
+    peersQuery.limit(2000), groupQuery, hcpcsQuery, geoQuery
+  ]);
+
+  // 3. Aggregate all peers into a unified map
+  type PeerEntry = {
+    npi: string; name: string; city: string; state: string; zip: string; specialty: string;
+    sharedDrugs: Set<string>; totalClaims: number; beneCnt: number;
+    hcpcsCodes: string[]; isSameGroup: boolean; isGeoPeer: boolean;
+  };
+  const byNpi = new Map<string, PeerEntry>();
+
+  const upsertPeer = (key: string, partial: Partial<PeerEntry> & { npi: string }) => {
+    if (!byNpi.has(key)) {
+      byNpi.set(key, {
+        name: "", city: "", state: "", zip: "", specialty: "",
+        sharedDrugs: new Set(), totalClaims: 0, beneCnt: 0,
+        hcpcsCodes: [], isSameGroup: false, isGeoPeer: false, ...partial
+      });
+    } else {
+      const p = byNpi.get(key)!;
+      if (partial.name && !p.name) p.name = partial.name;
+      if (partial.city && !p.city) p.city = partial.city;
+      if (partial.state && !p.state) p.state = partial.state;
+      if (partial.zip && !p.zip) p.zip = partial.zip;
+      if (partial.specialty && !p.specialty) p.specialty = partial.specialty;
+      if (partial.isSameGroup) p.isSameGroup = true;
+      if (partial.isGeoPeer) p.isGeoPeer = true;
+    }
+  };
+
+  for (const row of (peersResult.data || []) as Array<Record<string, any>>) {
+    upsertPeer(row.npi, {
+      npi: row.npi,
+      name: `${row.nppes_provider_first_name || ""} ${row.nppes_provider_last_org_name || ""}`.trim(),
+      city: row.nppes_provider_city || "", state: row.nppes_provider_state || "",
+      zip: row.nppes_provider_zip5 || "", specialty: row.provider_type || "",
+    });
+    const p = byNpi.get(row.npi)!;
+    if (row.drug_name) p.sharedDrugs.add(row.drug_name);
+    p.totalClaims += parseInt(row.total_claim_count || "0", 10);
+    p.beneCnt += parseInt(row.bene_count || "0", 10);
+  }
+
+  for (const row of (groupResult.data || []) as Array<Record<string, any>>) {
+    upsertPeer(row.npi, {
+      npi: row.npi, name: row.provider_name || "",
+      city: row.provider_city || "", state: row.provider_state || "",
+      zip: row.provider_zip || "", specialty: row.specialty || "", isSameGroup: true,
+    });
+  }
+
+  for (const row of (hcpcsResult.data || []) as Array<Record<string, any>>) {
+    upsertPeer(row.npi, { npi: row.npi });
+    byNpi.get(row.npi)!.hcpcsCodes = row.hcpcs_codes || [];
+  }
+
+  for (const row of (geoResult.data || []) as Array<Record<string, any>>) {
+    upsertPeer(row.npi, {
+      npi: row.npi, name: row.provider_name || "",
+      city: row.provider_city || "", state: row.provider_state || "",
+      zip: row.provider_zip || "", specialty: row.specialty || "",
+      isGeoPeer: true,
+      isSameGroup: !!(focalGroupPacId && row.group_pac_id === focalGroupPacId),
+    });
+  }
+
+  // 4. Score every peer
+  const focalDrugSet = new Set(focalDrugs);
+  const focalHcpcsSet = new Set(focalHcpcs);
+
+  const collaborators = [...byNpi.values()]
+    .filter(p => p.name)
+    .map((p) => {
+      const specialtyType = classifySpecialtyType(p.specialty, p.hcpcsCodes);
+      const affinity = SPECIALTY_AFFINITY[specialtyType] ?? 0.4;
+
+      const geoWeight = p.isSameGroup ? 1.0
+        : (p.zip && p.zip === effectiveZip) ? 0.8
+        : (p.city && p.city.toLowerCase() === effectiveCity.toLowerCase()) ? 0.5
+        : (p.state === effectiveState) ? 0.2
+        : 0.05;
+
+      const drugInt = [...p.sharedDrugs].filter(d => focalDrugSet.has(d)).length;
+      const drugUnion = new Set([...p.sharedDrugs, ...focalDrugSet]).size;
+      const drugJaccard = drugInt / Math.max(drugUnion, 1);
+
+      const hcpcsInt = p.hcpcsCodes.filter(h => focalHcpcsSet.has(h)).length;
+      const hcpcsUnion = new Set([...p.hcpcsCodes, ...focalHcpcs]).size;
+      const hcpcsJaccard = hcpcsInt / Math.max(hcpcsUnion, 1);
+
+      const sharedBeneProxy = geoWeight * (Math.min(p.beneCnt, focalTotalBenes) / Math.max(p.beneCnt, focalTotalBenes, 1));
+
+      let score: number;
+      let collaborationType: string;
+
+      if (p.isSameGroup) {
+        score = 1.0;
+        collaborationType = "same_group";
+      } else if (drugJaccard > 0 || hcpcsJaccard > 0) {
+        score = 0.4 * hcpcsJaccard + 0.4 * drugJaccard + 0.2 * sharedBeneProxy;
+        collaborationType = hcpcsJaccard > 0 && drugJaccard > 0 ? "hcpcs_and_drug"
+          : hcpcsJaccard > 0 ? "hcpcs_overlap" : "drug_overlap";
+      } else {
+        // Cross-specialty: geographic proximity × specialty affinity
+        score = geoWeight * affinity;
+        collaborationType = "cross_specialty";
+      }
+
+      // Cancer type inference for this collaborator
+      // sharedDrugs are from the query year; hcpcsCodes year is approximate (use query year)
+      const collabDrugRecords = [...p.sharedDrugs].map(drug => ({ drug, year: parseInt(year, 10) }));
+      const collabHcpcsRecords = p.hcpcsCodes.map(code => ({ code, year: parseInt(year, 10) }));
+      const cancerTypes = inferCancerTypesWithYears(collabDrugRecords, collabHcpcsRecords);
+
+      return {
+        npi: p.npi, name: p.name, city: p.city, state: p.state, specialty: p.specialty,
+        specialtyType,
+        sharedDrugs: [...p.sharedDrugs].sort(), totalClaims: p.totalClaims, beneCnt: p.beneCnt,
+        drugOverlapScore: Math.round(drugJaccard * 100) / 100,
+        hcpcsOverlapScore: Math.round(hcpcsJaccard * 100) / 100,
+        sharedBeneProxy: Math.round(sharedBeneProxy * 100) / 100,
+        collaborationScore: Math.round(score * 100) / 100,
+        collaborationType,
+        cancerTypes
+      };
+    })
+    .filter(p => p.collaborationScore >= 0.05)
+    .sort((a, b) => b.collaborationScore - a.collaborationScore)
+    .slice(0, 60);
+
+  // 5. Build response
+  const focalNode = {
+    npi,
+    name: `${focalInfo.nppes_provider_first_name || ""} ${focalInfo.nppes_provider_last_org_name || ""}`.trim(),
+    city: focalInfo.nppes_provider_city,
+    state: focalInfo.nppes_provider_state,
+    specialty: focalInfo.provider_type,
+    specialtyType: focalSpecialtyType,
+    totalClaims: yearRx.reduce((s: number, r: any) => s + parseInt(r.total_claim_count || "0", 10), 0),
+    beneCnt: focalTotalBenes,
+    drugs: focalDrugs,
+    hcpcsCodes: focalHcpcs,
+    groupPacId: focalGroupPacId,
+    groupName: focalGroupResult.data?.[0]?.group_name ?? null,
+    cancerTypes: focalCancerTypes,
+    prescriptionHistory: allFocalRx,
+    openPayments: focalPaymentsResult.data || [],
+    isFocal: true
+  };
+
+  return (res as any).json({
+    focalProvider: focalNode,
+    collaborators,
+    edges: collaborators.map((c) => ({
+      source: npi,
+      target: c.npi,
+      score: c.collaborationScore,
+      sharedDrugs: c.sharedDrugs,
+      drugOverlapScore: c.drugOverlapScore,
+      hcpcsOverlapScore: (c as any).hcpcsOverlapScore,
+      sharedBeneProxy: c.sharedBeneProxy,
+      collaborationType: (c as any).collaborationType
+    }))
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper functions for hospital network
+// ─────────────────────────────────────────────────────────────────────────────
+
+function isMidLevelCredential(cred: string): boolean {
+  const c = (cred || "").toUpperCase();
+  return ["NP", "PA-C", "APRN", "FNP", "CRNA", "CNS", "CNM", "AGPCNP", "FNP-C", "ANP"].some(x => {
+    const re = new RegExp(`\\b${x.replace("-", "\\-")}\\b`);
+    return re.test(c);
+  }) || c.includes("NURSE PRACTITIONER") || c.includes("PHYSICIAN ASSISTANT");
+}
+
+function isLikelyReferrer(specialty: string): boolean {
+  const s = (specialty || "").toUpperCase();
+  return (
+    s.includes("INTERNAL MEDICINE") || s.includes("FAMILY PRACTICE") ||
+    s.includes("GASTROENTEROLOGY") || s.includes("PULMONARY") ||
+    s.includes("UROLOGY") || s.includes("GYNECOLOGY") ||
+    s.includes("DERMATOLOGY") || s.includes("NEUROLOGY") ||
+    s.includes("NEPHROLOGY") || s.includes("RHEUMATOLOGY") ||
+    (s.includes("GENERAL PRACTICE") && !s.includes("ONCOLOGY"))
+  ) && !s.includes("ONCOLOGY") && !s.includes("HEMATOLOGY");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/analyzer/physician/locations?npi=
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/analyzer/physician/locations", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { npi } = req.query as Record<string, string>;
+  if (!npi) return (res as any).status(400).json({ error: "npi is required" });
+
+  try {
+    // Try physician_locations table first
+    const { data, error } = await supabaseAdmin
+      .from("physician_locations")
+      .select("npi, provider_name, specialty, credentials, address_line1, city, state, zip, phone, facility_name, org_pac_id")
+      .eq("npi", npi);
+
+    if (!error && data && data.length > 0) {
+      // Deduplicate by city|state|zip
+      const seen = new Set<string>();
+      const locations = data.filter((loc: any) => {
+        const key = `${loc.city}|${loc.state}|${loc.zip}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return (res as any).json({ locations });
+    }
+
+    // Fallback to physician_group_affiliations
+    const { data: fallbackData, error: fallbackError } = await supabaseAdmin
+      .from("physician_group_affiliations")
+      .select("npi, provider_name, specialty, credentials, provider_city, provider_state, provider_zip, group_pac_id, group_name")
+      .eq("npi", npi);
+
+    if (fallbackError) {
+      return (res as any).json({ locations: [] });
+    }
+
+    const seen = new Set<string>();
+    const locations = (fallbackData || [])
+      .filter((row: any) => {
+        const key = `${row.provider_city}|${row.provider_state}|${row.provider_zip}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((row: any) => ({
+        npi: row.npi,
+        provider_name: row.provider_name,
+        specialty: row.specialty,
+        credentials: row.credentials,
+        address_line1: "",
+        city: row.provider_city,
+        state: row.provider_state,
+        zip: row.provider_zip,
+        phone: "",
+        facility_name: row.group_name || null,
+        org_pac_id: row.group_pac_id || null
+      }));
+
+    return (res as any).json({ locations });
+  } catch (err: any) {
+    return (res as any).json({ locations: [] });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/analyzer/hospital/search?q=&state=
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/analyzer/hospital/search", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { q, state } = req.query as Record<string, string>;
+  if (!q || q.trim().length < 2) return (res as any).json({ hospitals: [] });
+
+  try {
+    let query = supabaseAdmin
+      .from("hospital_directory")
+      .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
+      .ilike("name", `%${q}%`)
+      .limit(30);
+
+    if (state) {
+      query = query.eq("state", state);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      if (error.message.includes("does not exist") || error.code === "42P01") {
+        return (res as any).status(503).json({ error: "Hospital data not yet loaded. Run the ETL pipeline." });
+      }
+      return (res as any).status(500).json({ error: error.message });
+    }
+
+    return (res as any).json({ hospitals: data || [] });
+  } catch (err: any) {
+    return (res as any).status(500).json({ error: err.message || "Search failed" });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/analyzer/hospital/network?ccn=&year=
+// ─────────────────────────────────────────────────────────────────────────────
+app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { ccn, year = "2023" } = req.query as Record<string, string>;
+  if (!ccn) return (res as any).status(400).json({ error: "ccn is required" });
+
+  try {
+    // 1. Fetch the hospital
+    const { data: hospitalData, error: hospitalError } = await supabaseAdmin
+      .from("hospital_directory")
+      .select("*")
+      .eq("ccn", ccn)
+      .limit(1);
+
+    if (hospitalError) {
+      if (hospitalError.message.includes("does not exist") || hospitalError.code === "42P01") {
+        return (res as any).status(503).json({ error: "Hospital data not yet loaded. Run the ETL pipeline." });
+      }
+      return (res as any).status(500).json({ error: hospitalError.message });
+    }
+
+    if (!hospitalData || hospitalData.length === 0) {
+      return (res as any).status(404).json({ error: "Hospital not found" });
+    }
+
+    const hospital = hospitalData[0];
+
+    // 2. Fetch affiliate hospitals (same health system)
+    let affiliateHospitals: any[] = [];
+    if (hospital.health_system) {
+      const { data: affiliatesData } = await supabaseAdmin
+        .from("hospital_directory")
+        .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
+        .eq("health_system", hospital.health_system)
+        .neq("ccn", ccn)
+        .limit(20);
+      affiliateHospitals = affiliatesData || [];
+    }
+
+    const allCcns = [ccn, ...affiliateHospitals.map((a: any) => a.ccn)];
+
+    // 3. Get affiliated physician NPIs
+    const { data: affiliationsData } = await supabaseAdmin
+      .from("physician_hospital_affiliations")
+      .select("ind_npi, hosp_ccn, facility_name")
+      .in("hosp_ccn", allCcns)
+      .limit(2000);
+
+    const npiSet = [...new Set((affiliationsData || []).map((a: any) => a.ind_npi).filter(Boolean))];
+
+    // Map NPI → affiliated hospital name
+    const npiToHospital = new Map<string, string>();
+    for (const aff of (affiliationsData || [])) {
+      if (!npiToHospital.has(aff.ind_npi)) {
+        npiToHospital.set(aff.ind_npi, aff.facility_name || hospital.name);
+      }
+    }
+
+    // 4. Get physician details
+    const physicianMap = new Map<string, any>();
+    if (npiSet.length > 0) {
+      const { data: physicianData } = await supabaseAdmin
+        .from("physician_group_affiliations")
+        .select("npi, provider_name, specialty, credentials, provider_city, provider_state, provider_zip")
+        .in("npi", npiSet.slice(0, 1000));
+
+      for (const p of (physicianData || [])) {
+        if (!physicianMap.has(p.npi)) {
+          physicianMap.set(p.npi, p);
+        }
+      }
+    }
+
+    // 5. Get prescribing data
+    const prescribingMap = new Map<string, { totalClaims: number; drugs: Set<string>; hasCompanionDx: boolean }>();
+    if (npiSet.length > 0) {
+      const { data: rxData } = await supabaseAdmin
+        .from("oncology_drug_prescribers")
+        .select("npi, drug_name, total_claim_count, requires_companion_dx")
+        .in("npi", npiSet.slice(0, 1000))
+        .eq("year", parseInt(year, 10))
+        .limit(2000);
+
+      for (const rx of (rxData || [])) {
+        const existing = prescribingMap.get(rx.npi) || { totalClaims: 0, drugs: new Set<string>(), hasCompanionDx: false };
+        existing.totalClaims += parseInt(rx.total_claim_count || "0", 10);
+        if (rx.drug_name) existing.drugs.add(rx.drug_name);
+        if (rx.requires_companion_dx) existing.hasCompanionDx = true;
+        prescribingMap.set(rx.npi, existing);
+      }
+    }
+
+    // 6. Build provider list
+    const allProviders: any[] = [];
+    for (const npi of npiSet) {
+      const pInfo = physicianMap.get(npi);
+      if (!pInfo) continue;
+
+      const rxInfo = prescribingMap.get(npi) || { totalClaims: 0, drugs: new Set<string>(), hasCompanionDx: false };
+      const specialtyType = classifySpecialtyType(pInfo.specialty || "", []);
+      const midLevel = isMidLevelCredential(pInfo.credentials || "");
+      const referrer = isLikelyReferrer(pInfo.specialty || "");
+
+      allProviders.push({
+        npi,
+        name: pInfo.provider_name,
+        specialty: pInfo.specialty || "",
+        specialtyType,
+        credentials: pInfo.credentials || "",
+        city: pInfo.provider_city || "",
+        state: pInfo.provider_state || "",
+        zip: pInfo.provider_zip || "",
+        totalClaims: rxInfo.totalClaims,
+        drugs: [...rxInfo.drugs],
+        hasCompanionDx: rxInfo.hasCompanionDx,
+        affiliatedHospital: npiToHospital.get(npi) || hospital.name,
+        isMidLevel: midLevel,
+        isReferrer: referrer && !midLevel
+      });
+    }
+
+    // 7. Group into categories, sorted by totalClaims DESC, limit 30
+    const sortByClaimsDesc = (a: any, b: any) => b.totalClaims - a.totalClaims;
+
+    const providers = {
+      oncology:   allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "oncology").sort(sortByClaimsDesc).slice(0, 30),
+      hematology: allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "hematology").sort(sortByClaimsDesc).slice(0, 30),
+      surgery:    allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "surgery").sort(sortByClaimsDesc).slice(0, 30),
+      radiology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && (p.specialtyType === "radiology" || p.specialtyType === "radiation")).sort(sortByClaimsDesc).slice(0, 30),
+      pathology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "pathology").sort(sortByClaimsDesc).slice(0, 30),
+      midlevels:  allProviders.filter(p => p.isMidLevel).sort(sortByClaimsDesc).slice(0, 30),
+      referrers:  allProviders.filter(p => p.isReferrer).sort(sortByClaimsDesc).slice(0, 30)
+    };
+
+    // 8. Prescribing highlights
+    const drugClaimsMap = new Map<string, { claims: number; providers: number; companionDx: boolean }>();
+    let companionDxCount = 0;
+    for (const [, rxInfo] of prescribingMap) {
+      if (rxInfo.hasCompanionDx) companionDxCount++;
+      for (const drug of rxInfo.drugs) {
+        const existing = drugClaimsMap.get(drug) || { claims: 0, providers: 0, companionDx: false };
+        existing.claims += rxInfo.totalClaims;
+        existing.providers += 1;
+        drugClaimsMap.set(drug, existing);
+      }
+    }
+
+    const allDrugs = [...drugClaimsMap.entries()]
+      .map(([drug, info]) => ({ drug, claims: info.claims, providers: info.providers, companionDx: info.companionDx }))
+      .sort((a, b) => b.claims - a.claims);
+
+    const totalProviders = allProviders.length;
+
+    // 9. Lab testing — find NGS/IHC/FISH labs affiliated with this hospital or in same city
+    const labNpiSet = npiSet.slice(0, 500);
+    const [affiliatedLabResult, geoCityLabResult] = await Promise.all([
+      labNpiSet.length > 0
+        ? supabaseAdmin
+            .from("ngs_lab_utilization")
+            .select("npi, provider_last_name, provider_first_name, nppes_provider_city, nppes_provider_state, hcpcs_code, hcpcs_description, test_category, line_srvc_cnt, bene_unique_cnt")
+            .in("npi", labNpiSet)
+            .eq("year", parseInt(year, 10))
+            .order("line_srvc_cnt", { ascending: false })
+            .limit(200)
+        : Promise.resolve({ data: [] as any[] }),
+      hospital.city && hospital.state
+        ? supabaseAdmin
+            .from("ngs_lab_utilization")
+            .select("npi, provider_last_name, provider_first_name, nppes_provider_city, nppes_provider_state, hcpcs_code, hcpcs_description, test_category, line_srvc_cnt, bene_unique_cnt")
+            .ilike("nppes_provider_city", hospital.city)
+            .eq("nppes_provider_state", hospital.state)
+            .eq("year", parseInt(year, 10))
+            .order("line_srvc_cnt", { ascending: false })
+            .limit(200)
+        : Promise.resolve({ data: [] as any[] })
+    ]);
+
+    const affiliatedLabNpis = new Set(labNpiSet);
+    const labByNpiCode = new Map<string, any>();
+    const allLabRows = [...(affiliatedLabResult.data || []), ...(geoCityLabResult.data || [])];
+    for (const row of allLabRows) {
+      const key = `${row.npi}|${row.hcpcs_code}`;
+      if (!labByNpiCode.has(key)) {
+        labByNpiCode.set(key, {
+          npi: row.npi,
+          name: `${row.provider_first_name || ""} ${row.provider_last_name || ""}`.trim(),
+          city: row.nppes_provider_city || "",
+          state: row.nppes_provider_state || "",
+          testCategory: row.test_category,
+          hcpcsCode: row.hcpcs_code,
+          hcpcsDescription: row.hcpcs_description,
+          totalServices: parseInt(row.line_srvc_cnt || "0", 10),
+          totalPatients: parseInt(row.bene_unique_cnt || "0", 10),
+          isHospitalAffiliated: affiliatedLabNpis.has(row.npi)
+        });
+      }
+    }
+    const labTesting = [...labByNpiCode.values()]
+      .sort((a, b) => (b.isHospitalAffiliated ? 1 : 0) - (a.isHospitalAffiliated ? 1 : 0) || b.totalServices - a.totalServices)
+      .slice(0, 100);
+
+    return (res as any).json({
+      hospital: {
+        ccn: hospital.ccn,
+        pac_id: hospital.pac_id,
+        name: hospital.name,
+        city: hospital.city,
+        state: hospital.state,
+        zip: hospital.zip,
+        hospital_type: hospital.hospital_type,
+        health_system: hospital.health_system
+      },
+      affiliateHospitals,
+      providers,
+      prescribingHighlights: {
+        allDrugs,
+        companionDxCount,
+        totalProviders
+      },
+      labTesting
+    });
+  } catch (err: any) {
+    return (res as any).status(500).json({ error: err.message || "Failed to load hospital network" });
+  }
+});
+
+// ─── Part B Physician Services ───────────────────────────────────────────────
+
+app.get("/api/analyzer/physician/partb-services", async (req: Request, res: Response) => {
+  try {
+    const npi = (req.query.npi as string || "").trim();
+    const year = req.query.year as string | undefined;
+    if (!npi) return (res as any).status(400).json({ error: "npi required" });
+    if (!supabaseAdmin) return (res as any).json({ services: [], available: false });
+
+    let query = supabaseAdmin
+      .from("partb_physician_services")
+      .select("*")
+      .eq("npi", npi);
+
+    if (year) {
+      query = query.eq("year", parseInt(year, 10));
+    }
+
+    const { data, error } = await query.order("total_services", { ascending: false }).limit(200);
+
+    if (error) {
+      // Table may not exist yet
+      return (res as any).json({ services: [], available: false });
+    }
+
+    return (res as any).json({ services: data || [], available: true });
+  } catch (err: any) {
+    return (res as any).json({ services: [], available: false });
+  }
+});
+
+// ─── ACO Participants ─────────────────────────────────────────────────────────
+
+app.get("/api/analyzer/physician/aco", async (req: Request, res: Response) => {
+  try {
+    const npi = (req.query.npi as string || "").trim();
+    const acoId = (req.query.aco_id as string || "").trim();
+    if (!supabaseAdmin) return (res as any).json({ acos: [], peers: [], available: false });
+
+    if (acoId) {
+      // Peer lookup — all NPIs in a given ACO
+      const { data, error } = await supabaseAdmin
+        .from("aco_participants")
+        .select("aco_id, aco_name, npi, practice_name, city, state, performance_year")
+        .eq("aco_id", acoId)
+        .limit(200);
+
+      if (error) return (res as any).json({ peers: [], available: false });
+      return (res as any).json({ peers: data || [], available: true });
+    }
+
+    if (!npi) return (res as any).status(400).json({ error: "npi or aco_id required" });
+
+    const { data, error } = await supabaseAdmin
+      .from("aco_participants")
+      .select("aco_id, aco_name, npi, practice_name, city, state, performance_year")
+      .eq("npi", npi)
+      .order("performance_year", { ascending: false })
+      .limit(50);
+
+    if (error) return (res as any).json({ acos: [], available: false });
+    return (res as any).json({ acos: data || [], available: true });
+  } catch (err: any) {
+    return (res as any).json({ acos: [], available: false });
+  }
+});
+
+// ─── Order and Referring ──────────────────────────────────────────────────────
+
+app.get("/api/analyzer/physician/ordering-status", async (req: Request, res: Response) => {
+  try {
+    const npi = (req.query.npi as string || "").trim();
+    if (!npi) return (res as any).status(400).json({ error: "npi required" });
+    if (!supabaseAdmin) return (res as any).json({ eligible: false, provider: null, available: false });
+
+    const { data, error } = await supabaseAdmin
+      .from("order_referring_providers")
+      .select("npi, last_name, first_name, org_name, state, provider_type")
+      .eq("npi", npi)
+      .limit(1);
+
+    if (error) return (res as any).json({ eligible: false, provider: null, available: false });
+
+    const provider = data && data.length > 0 ? data[0] : null;
+    return (res as any).json({ eligible: provider !== null, provider, available: true });
+  } catch (err: any) {
+    return (res as any).json({ eligible: false, provider: null, available: false });
+  }
 });
 
 if (!isServerlessRuntime) {

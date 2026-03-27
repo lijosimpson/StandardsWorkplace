@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "./api";
 import type {
   NgsLabRecord,
@@ -9,10 +9,22 @@ import type {
   PrescriberSummary,
   OpenPaymentsSummary,
   ProspectRecord,
-  CrossReferenceResponse
+  CrossReferenceResponse,
+  CollaborationNetwork,
+  CollaboratorNode,
+  CollaborationProviderSearchResult,
+  CancerTypeYear,
+  PhysicianLocation,
+  HospitalSearchResult,
+  HospitalProvider,
+  HospitalNetwork,
+  HospitalLabRecord,
+  PartBServiceRecord,
+  AcoMembership,
+  OrderReferringStatus
 } from "./types";
 
-type AnalyzerTab = "ngs-labs" | "prescribers" | "open-payments" | "medicaid" | "prospects";
+type AnalyzerTab = "ngs-labs" | "prescribers" | "open-payments" | "medicaid" | "prospects" | "collaboration" | "hospital-network";
 
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
@@ -813,12 +825,923 @@ function CrossRefDrawer({ npi, onClose }: { npi: string; onClose: () => void }) 
               </div>
             )}
 
+            {data.ngsLabs && data.ngsLabs.length > 0 && (
+              <div className="crossref-section">
+                <h4>
+                  NGS / IHC Labs in {data.provider?.state || "Same State"}
+                  <span className="crossref-note"> — labs performing tests required by this prescriber's drugs (best proxy; Medicare Part B does not record the ordering physician)</span>
+                </h4>
+                <table className="analyzer-table compact-table">
+                  <thead>
+                    <tr>
+                      <th>Lab Name</th>
+                      <th>City</th>
+                      <th>Test Type</th>
+                      <th>Test Code</th>
+                      <th>Year</th>
+                      <th>Claims</th>
+                      <th>Patients</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.ngsLabs.map((lab, i) => (
+                      <tr key={`${lab.npi}-${lab.hcpcs_code}-${lab.year}-${i}`}>
+                        <td><strong>{lab.provider_last_name}{lab.provider_first_name ? `, ${lab.provider_first_name}` : ""}</strong></td>
+                        <td>{lab.nppes_provider_city}</td>
+                        <td>{lab.test_category}</td>
+                        <td title={lab.hcpcs_description}>{lab.hcpcs_code}</td>
+                        <td>{lab.year}</td>
+                        <td className="num">{fmt(lab.line_srvc_cnt)}</td>
+                        <td className="num">{fmt(lab.bene_unique_cnt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
             {data.prescriptions.length === 0 && data.openPayments.length === 0 && (
               <div className="analyzer-empty">No data found for this NPI in the loaded datasets.</div>
             )}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collaboration Network Tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SPECIALTY_COLORS: Record<string, string> = {
+  "Hematology/Oncology": "#4e9af1",
+  "Medical Oncology": "#3b82f6",
+  "Radiation Oncology": "#f97316",
+  "Gynecological/Oncology": "#a855f7",
+  "Surgical Oncology": "#10b981",
+  "Hematology": "#06b6d4",
+  "Thoracic Surgery": "#84cc16",
+  "Pathology": "#f59e0b",
+  "Internal Medicine": "#6b7280",
+  "Family Practice": "#9ca3af",
+};
+
+// Canonical specialty type → display config
+const SPECIALTY_TYPE_META: Record<string, { color: string; label: string; icon: string }> = {
+  oncology:   { color: "#3b82f6", label: "Medical Oncology",    icon: "💊" },
+  hematology: { color: "#8b5cf6", label: "Hematology",          icon: "🩸" },
+  radiation:  { color: "#f97316", label: "Radiation Oncology",  icon: "⚡" },
+  surgery:    { color: "#22c55e", label: "Surgical Oncology",   icon: "🔪" },
+  pathology:  { color: "#eab308", label: "Pathology",           icon: "🔬" },
+  radiology:  { color: "#06b6d4", label: "Radiology",           icon: "🩻" },
+  other:      { color: "#94a3b8", label: "Other",               icon: "👤" },
+};
+const CARE_TEAM_TYPES = ["oncology", "hematology", "radiation", "surgery", "pathology", "radiology"] as const;
+
+function specialtyTypeColor(specialtyType?: string): string {
+  return SPECIALTY_TYPE_META[specialtyType || "other"]?.color ?? "#94a3b8";
+}
+
+function CancerTypeBadges({ cancerTypes, compact }: { cancerTypes?: CancerTypeYear[]; compact?: boolean }) {
+  if (!cancerTypes || cancerTypes.length === 0) return null;
+  const items = compact ? cancerTypes.slice(0, 3) : cancerTypes;
+  return (
+    <div className="cancer-type-badges">
+      {items.map(ct => (
+        <span key={ct.type} className="cancer-type-badge" title={ct.years.length > 0 ? `Treated in: ${ct.years.join(", ")}` : ct.type}>
+          {ct.type}
+          {ct.years.length > 0 && <span className="cancer-type-year">{ct.years.length === 1 ? ct.years[0] : `${ct.years[0]}–${ct.years[ct.years.length - 1]}`}</span>}
+        </span>
+      ))}
+      {compact && cancerTypes.length > 3 && (
+        <span className="cancer-type-badge cancer-type-more">+{cancerTypes.length - 3}</span>
+      )}
+    </div>
+  );
+}
+
+function specialtyColor(spec: string): string {
+  for (const [key, color] of Object.entries(SPECIALTY_COLORS)) {
+    if (spec?.toLowerCase().includes(key.toLowerCase())) return color;
+  }
+  return "#94a3b8";
+}
+
+function scoreLabel(score: number): string {
+  if (score >= 0.7) return "Strong";
+  if (score >= 0.4) return "Moderate";
+  if (score >= 0.2) return "Weak";
+  return "Low";
+}
+
+// Simple radial force network rendered in SVG
+function CollaborationGraph({ network, onNodeClick }: {
+  network: CollaborationNetwork;
+  onNodeClick: (node: CollaboratorNode) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const W = 800, H = 560;
+  const CX = W / 2, CY = H / 2;
+
+  // Position focal node in center, collaborators in rings by score
+  const positions = new Map<string, { x: number; y: number; node: CollaboratorNode }>();
+  const focal = { ...network.focalProvider, collaborationScore: 1, sharedDrugs: [], drugOverlapScore: 1, hcpcsOverlapScore: 1, sharedBeneProxy: 1 } as CollaboratorNode;
+  positions.set(network.focalProvider.npi, { x: CX, y: CY, node: focal });
+
+  const strong = network.collaborators.filter(c => c.collaborationScore >= 0.4);
+  const moderate = network.collaborators.filter(c => c.collaborationScore >= 0.2 && c.collaborationScore < 0.4);
+  const weak = network.collaborators.filter(c => c.collaborationScore < 0.2);
+
+  const placeRing = (nodes: CollaboratorNode[], radius: number) => {
+    nodes.forEach((n, i) => {
+      const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI - Math.PI / 2;
+      positions.set(n.npi, { x: CX + radius * Math.cos(angle), y: CY + radius * Math.sin(angle), node: n });
+    });
+  };
+  placeRing(strong.slice(0, 12), 160);
+  placeRing(moderate.slice(0, 16), 280);
+  placeRing(weak.slice(0, 12), 390);
+
+  return (
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="collab-graph-svg">
+      <defs>
+        <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#475569" />
+        </marker>
+      </defs>
+
+      {/* Ring guides */}
+      {[160, 280, 390].map(r => (
+        <circle key={r} cx={CX} cy={CY} r={r} fill="none" stroke="#1e293b" strokeWidth="1" strokeDasharray="4 4" opacity="0.4" />
+      ))}
+      <text x={CX + 165} y={CY - 8} fontSize="10" fill="#475569">Strong (≥0.4)</text>
+      <text x={CX + 285} y={CY - 8} fontSize="10" fill="#475569">Moderate (≥0.2)</text>
+
+      {/* Specialty legend */}
+      {CARE_TEAM_TYPES.map((t, i) => {
+        const meta = SPECIALTY_TYPE_META[t];
+        return (
+          <g key={t} transform={`translate(${8}, ${H - 110 + i * 17})`}>
+            <circle cx={6} cy={6} r={5} fill={meta.color} />
+            <text x={14} y={10} fontSize="9" fill="#94a3b8">{meta.icon} {meta.label}</text>
+          </g>
+        );
+      })}
+
+      {/* Edges */}
+      {network.edges.map(edge => {
+        const src = positions.get(edge.source);
+        const tgt = positions.get(edge.target);
+        if (!src || !tgt) return null;
+        const opacity = 0.15 + edge.score * 0.6;
+        const strokeW = Math.max(0.5, edge.score * 3);
+        return (
+          <line key={`${edge.source}-${edge.target}`}
+            x1={src.x} y1={src.y} x2={tgt.x} y2={tgt.y}
+            stroke="#64748b" strokeWidth={strokeW} opacity={opacity} />
+        );
+      })}
+
+      {/* Nodes */}
+      {[...positions.values()].map(({ x, y, node }) => {
+        const isFocal = node.npi === network.focalProvider.npi;
+        const r = isFocal ? 22 : Math.max(8, 6 + node.collaborationScore * 10);
+        const color = node.specialtyType ? specialtyTypeColor(node.specialtyType) : specialtyColor(node.specialty);
+        return (
+          <g key={node.npi} onClick={() => onNodeClick(node)} className="collab-node" style={{ cursor: "pointer" }}>
+            <circle cx={x} cy={y} r={r + 3} fill={color} opacity="0.15" />
+            <circle cx={x} cy={y} r={r} fill={color} stroke={isFocal ? "#fff" : color} strokeWidth={isFocal ? 3 : 1} />
+            {isFocal && <text x={x} y={y + 5} textAnchor="middle" fontSize="11" fontWeight="bold" fill="#fff">YOU</text>}
+            {!isFocal && r >= 10 && (
+              <text x={x} y={y + r + 12} textAnchor="middle" fontSize="9" fill="#cbd5e1"
+                style={{ pointerEvents: "none" }}>
+                {node.name.split(" ").slice(-1)[0]}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// Care Team view — groups collaborators by specialty type in pods
+function CareTeamView({ network, onNodeClick }: { network: CollaborationNetwork; onNodeClick: (n: CollaboratorNode) => void }) {
+  const bySpecialty = Object.fromEntries(
+    CARE_TEAM_TYPES.map(t => [t, network.collaborators.filter(c => c.specialtyType === t).slice(0, 8)])
+  );
+  const coveredCount = CARE_TEAM_TYPES.filter(t => bySpecialty[t].length > 0).length;
+
+  return (
+    <div className="care-team-view">
+      <div className="care-team-completeness">
+        <span className="care-team-coverage-label">Care Team Coverage</span>
+        <div className="care-team-coverage-badges">
+          {CARE_TEAM_TYPES.map(t => {
+            const meta = SPECIALTY_TYPE_META[t];
+            const has = bySpecialty[t].length > 0;
+            return (
+              <span key={t} className={`care-team-spec-badge ${has ? "covered" : "missing"}`}
+                style={{ borderColor: meta.color, color: has ? meta.color : "#64748b", background: has ? meta.color + "18" : "transparent" }}>
+                {has ? "✓" : "✗"} {meta.icon} {meta.label}
+              </span>
+            );
+          })}
+        </div>
+        <span className="care-team-score">{coveredCount}/{CARE_TEAM_TYPES.length} specialties</span>
+      </div>
+
+      <div className="care-team-grid">
+        {CARE_TEAM_TYPES.map(t => {
+          const meta = SPECIALTY_TYPE_META[t];
+          const members = bySpecialty[t];
+          return (
+            <div key={t} className="care-team-pod" style={{ borderTopColor: meta.color }}>
+              <div className="pod-header">
+                <span className="pod-icon">{meta.icon}</span>
+                <span className="pod-label" style={{ color: meta.color }}>{meta.label}</span>
+                {members.length > 0 && <span className="pod-count">{members.length}</span>}
+              </div>
+              {members.length === 0 ? (
+                <div className="pod-empty">No {meta.label.toLowerCase()} found in area</div>
+              ) : (
+                members.map(c => (
+                  <div key={c.npi} className="pod-member" onClick={() => onNodeClick(c)}>
+                    <div className="pod-member-name">{c.name}</div>
+                    <div className="pod-member-meta">{c.city}, {c.state}</div>
+                    <CancerTypeBadges cancerTypes={c.cancerTypes} compact />
+                    <div className="pod-member-footer">
+                      <span className={`collab-badge collab-${c.collaborationType === "same_group" ? "strong" : scoreLabel(c.collaborationScore).toLowerCase()}`}>
+                        {c.collaborationType === "same_group" ? "Same Group" : `${Math.round(c.collaborationScore * 100)}%`}
+                      </span>
+                      <span className="pod-conn-type">{c.collaborationType === "cross_specialty" ? "Geo" : c.collaborationType === "same_group" ? "" : "Rx/HCPCS"}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CollaborationTab({ year, state }: { year: string; state: string }) {
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<CollaborationProviderSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [network, setNetwork] = useState<CollaborationNetwork | null>(null);
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<CollaboratorNode | null>(null);
+  const [error, setError] = useState("");
+  const [view, setView] = useState<"graph" | "table" | "care-team">("care-team");
+  const [physicianLocations, setPhysicianLocations] = useState<PhysicianLocation[]>([]);
+  const [selectedLocation, setSelectedLocation] = useState<PhysicianLocation | null>(null);
+  const [focalPartB, setFocalPartB] = useState<PartBServiceRecord[]>([]);
+  const [focalAcos, setFocalAcos] = useState<AcoMembership[]>([]);
+  const [orderingStatus, setOrderingStatus] = useState<OrderReferringStatus | null>(null);
+  const [selectedNodeAco, setSelectedNodeAco] = useState<AcoMembership[]>([]);
+  const [selectedNodeOrdering, setSelectedNodeOrdering] = useState<boolean>(false);
+
+  const doSearch = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const res = await api.searchCollaborationProviders(q, state || undefined, year || undefined);
+      setSearchResults(res.providers);
+    } catch (e: any) {
+      setError(e.message || "Search failed");
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [state, year]);
+
+  const loadNetwork = async (npi: string, focalCity?: string, focalState?: string, focalZip?: string) => {
+    setNetworkLoading(true);
+    setError("");
+    setSearchResults([]);
+    setSelectedNode(null);
+    setSelectedLocation(null);
+    try {
+      const [net, locResult] = await Promise.all([
+        api.getCollaborationNetwork(npi, year || undefined, focalCity, focalState, focalZip),
+        focalCity ? Promise.resolve({ locations: [] }) : api.getPhysicianLocations(npi)
+      ]);
+      setNetwork(net);
+      setPhysicianLocations(locResult.locations || []);
+      setSelectedNode({ ...net.focalProvider, collaborationScore: 1, sharedDrugs: net.focalProvider.drugs, drugOverlapScore: 1, hcpcsOverlapScore: 1, sharedBeneProxy: 1 });
+
+      // Fetch enrichment data in parallel — failures don't block network load
+      try {
+        const [partBResult, acoResult, orderResult] = await Promise.all([
+          api.getPhysicianPartBServices(npi, year || undefined),
+          api.getPhysicianAco(npi),
+          api.getOrderingStatus(npi)
+        ]);
+        setFocalPartB(partBResult.services || []);
+        setFocalAcos(acoResult.acos || []);
+        setOrderingStatus(orderResult);
+      } catch {
+        // Enrichment failures are non-fatal
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to load network");
+    } finally {
+      setNetworkLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedNode?.npi) return;
+    Promise.all([
+      api.getPhysicianAco(selectedNode.npi),
+      api.getOrderingStatus(selectedNode.npi)
+    ]).then(([acoRes, orderRes]) => {
+      setSelectedNodeAco(acoRes.acos || []);
+      setSelectedNodeOrdering(orderRes.eligible || false);
+    }).catch(() => {});
+  }, [selectedNode?.npi]);
+
+  const fmtScore = (s: number) => `${Math.round(s * 100)}%`;
+
+  return (
+    <div className="analyzer-tab-body">
+      <div className="collab-search-bar">
+        <input
+          type="text"
+          className="analyzer-input collab-search-input"
+          placeholder="Search physician by name or NPI…"
+          value={searchQ}
+          onChange={e => { setSearchQ(e.target.value); doSearch(e.target.value); }}
+          onKeyDown={e => { if (e.key === "Enter") doSearch(searchQ); }}
+        />
+        {searchLoading && <span className="analyzer-loading" style={{ padding: "0 12px" }}>Searching…</span>}
+      </div>
+
+      {searchResults.length > 0 && (
+        <div className="collab-search-results">
+          {searchResults.map(p => (
+            <div key={p.npi} className="collab-search-item" onClick={() => { setSearchQ(p.name); loadNetwork(p.npi); }}>
+              <strong>{p.name}</strong>
+              <span className="collab-search-meta">{p.specialty} · {p.city}, {p.state}</span>
+              <span className="collab-search-npi">NPI: {p.npi}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {physicianLocations.length > 1 && network && !networkLoading && (
+        <div className="physician-locations-panel">
+          <div className="physician-locations-header">
+            {physicianLocations.length} practice locations found — select a location to view the network from that office:
+          </div>
+          <div className="physician-locations-list">
+            {physicianLocations.map((loc, i) => {
+              const isActive = selectedLocation
+                ? selectedLocation.city === loc.city && selectedLocation.state === loc.state && selectedLocation.zip === loc.zip
+                : (network?.focalProvider.city === loc.city && network?.focalProvider.state === loc.state);
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={`physician-location-card${isActive ? " active" : ""}`}
+                  onClick={() => {
+                    setSelectedLocation(loc);
+                    loadNetwork(loc.npi, loc.city, loc.state, loc.zip);
+                  }}
+                >
+                  <div className="loc-facility">{loc.facility_name || "Independent Practice"}</div>
+                  <div className="loc-address">{loc.address_line1 && `${loc.address_line1}, `}{loc.city}, {loc.state} {loc.zip}</div>
+                  {loc.phone && <div className="loc-phone">{loc.phone}</div>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {error && <div className="analyzer-error">{error}</div>}
+      {networkLoading && <div className="analyzer-loading" style={{ padding: "40px", textAlign: "center" }}>Building collaboration network…</div>}
+
+      {!network && !networkLoading && !error && (
+        <div className="collab-empty-state">
+          <div className="collab-empty-icon">🔬</div>
+          <h3>Physician Collaboration Network</h3>
+          <p>Search for an oncology or hematology physician to see their collaboration group — physicians who prescribe overlapping drugs and likely share patients.</p>
+          <div className="collab-score-legend">
+            <h4>Collaboration Score</h4>
+            <div className="collab-legend-row"><span className="collab-legend-dot" style={{ background: "#22c55e" }}></span><strong>Same Practice Group</strong> — Score 1.0, strongest signal</div>
+            <div className="collab-legend-row"><span className="collab-legend-dot" style={{ background: "#4e9af1" }}></span><strong>HCPCS + Drug overlap</strong> — 40% HCPCS Jaccard + 40% drug Jaccard + 20% geo proxy</div>
+            <div className="collab-legend-row"><span className="collab-legend-dot" style={{ background: "#f97316" }}></span><strong>Cross-specialty</strong> — Geographic proximity × specialty affinity (radiation 0.9, pathology 0.9, surgery 0.85, radiology 0.8)</div>
+          </div>
+          <div className="collab-score-legend" style={{ marginTop: "16px" }}>
+            <h4>Specialty Types</h4>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              {CARE_TEAM_TYPES.map(t => {
+                const meta = SPECIALTY_TYPE_META[t];
+                return (
+                  <span key={t} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+                    <span style={{ width: 12, height: 12, borderRadius: "50%", background: meta.color, display: "inline-block" }}></span>
+                    {meta.icon} {meta.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {network && !networkLoading && (
+        <div className="collab-network-layout">
+          <div className="collab-network-main">
+            <div className="collab-network-header">
+              <div>
+                <div className="collab-focal-name">{network.focalProvider.name}</div>
+                <div className="collab-focal-meta">{network.focalProvider.specialty} · {network.focalProvider.city}, {network.focalProvider.state} · NPI: {network.focalProvider.npi}</div>
+                <div className="collab-focal-stats">
+                  <span>{fmt(network.focalProvider.totalClaims)} claims</span>
+                  <span>{network.focalProvider.drugs.length} oncology drugs</span>
+                  <span>{network.collaborators.length} collaborators found</span>
+                </div>
+                {/* Enrichment badges */}
+                <div className="collab-enrichment-badges">
+                  {orderingStatus?.eligible && (
+                    <span className="collab-badge collab-strong" title="Enrolled in CMS Order & Referring list">CMS Ordering Eligible</span>
+                  )}
+                  {focalPartB.some(s => s.service_category === "NGS") && (
+                    <span className="collab-badge collab-strong" title="Bills NGS codes under own NPI — in-house genomic testing">In-House NGS Biller</span>
+                  )}
+                  {focalPartB.some(s => s.service_category === "CHEMO") && (
+                    <span className="collab-badge collab-moderate" title="Bills chemotherapy infusion codes">Chemo Infusion Provider</span>
+                  )}
+                  {focalAcos.length > 0 && (
+                    <span className="collab-badge collab-moderate" title={`Member of ACO: ${focalAcos[0].aco_name}`}>
+                      ACO: {focalAcos[0].aco_name}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="collab-view-toggle">
+                <button type="button" className={`analyzer-btn-outline${view === "care-team" ? " active" : ""}`} onClick={() => setView("care-team")}>Care Team</button>
+                <button type="button" className={`analyzer-btn-outline${view === "graph" ? " active" : ""}`} onClick={() => setView("graph")}>Graph</button>
+                <button type="button" className={`analyzer-btn-outline${view === "table" ? " active" : ""}`} onClick={() => setView("table")}>Table</button>
+              </div>
+            </div>
+
+            {(focalPartB.length > 0 || focalAcos.length > 0) && (
+              <div className="collab-enrichment-section">
+                {focalPartB.length > 0 && (
+                  <div className="enrichment-block">
+                    <h5>Part B Service Billing</h5>
+                    <table className="analyzer-table compact-table">
+                      <thead><tr><th>Category</th><th>HCPCS</th><th>Description</th><th>Services</th><th>Patients</th><th>Site</th></tr></thead>
+                      <tbody>
+                        {focalPartB.map((s, i) => (
+                          <tr key={i}>
+                            <td><span className={`collab-badge collab-${s.service_category === "NGS" ? "strong" : "moderate"}`}>{s.service_category}</span></td>
+                            <td className="mono">{s.hcpcs_code}</td>
+                            <td style={{ fontSize: "11px" }}>{s.hcpcs_description}</td>
+                            <td className="num">{fmt(s.total_services)}</td>
+                            <td className="num">{fmt(s.total_unique_benes)}</td>
+                            <td>{s.place_of_service === "F" ? "Facility" : "Office"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {focalAcos.length > 0 && (
+                  <div className="enrichment-block">
+                    <h5>ACO Memberships</h5>
+                    {focalAcos.map((a, i) => (
+                      <div key={i} className="aco-card">
+                        <strong>{a.aco_name}</strong>
+                        <span className="collab-search-meta">{a.practice_name} · {a.city}, {a.state} · PY{a.performance_year}</span>
+                        <span className="collab-search-npi">ACO ID: {a.aco_id}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {view === "care-team" && (
+              <CareTeamView network={network} onNodeClick={setSelectedNode} />
+            )}
+
+            {view === "graph" && (
+              <div className="collab-graph-wrap">
+                <CollaborationGraph network={network} onNodeClick={setSelectedNode} />
+              </div>
+            )}
+
+            {view === "table" && (
+              <div className="analyzer-table-wrap">
+                <table className="analyzer-table">
+                  <thead>
+                    <tr>
+                      <th>Physician</th>
+                      <th>Specialty</th>
+                      <th>Location</th>
+                      <th>Shared Drugs</th>
+                      <th>Drug ∩</th>
+                      <th>HCPCS ∩</th>
+                      <th>Bene Proxy</th>
+                      <th>Score</th>
+                      <th>Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {network.collaborators.map(c => (
+                      <tr key={c.npi} onClick={() => setSelectedNode(c)} style={{ cursor: "pointer" }}>
+                        <td>
+                          <strong>{c.name}</strong>
+                          <div style={{ fontSize: "11px", color: "#94a3b8" }}>NPI: {c.npi}</div>
+                        </td>
+                        <td><span style={{ color: specialtyColor(c.specialty), fontSize: "12px" }}>⬤</span> {c.specialty}</td>
+                        <td>{c.city}, {c.state}</td>
+                        <td style={{ fontSize: "11px" }}>{c.sharedDrugs.slice(0, 3).join(", ")}{c.sharedDrugs.length > 3 ? ` +${c.sharedDrugs.length - 3}` : ""}</td>
+                        <td className="num">{fmtScore(c.drugOverlapScore)}</td>
+                        <td className="num">{fmtScore(c.hcpcsOverlapScore)}</td>
+                        <td className="num">{fmtScore(c.sharedBeneProxy)}</td>
+                        <td className="num"><strong>{fmtScore(c.collaborationScore)}</strong></td>
+                        <td><span className={`collab-badge collab-${c.collaborationType === "same_group" ? "strong" : scoreLabel(c.collaborationScore).toLowerCase()}`}>{c.collaborationType === "same_group" ? "Group" : scoreLabel(c.collaborationScore)}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {selectedNode && (
+            <div className="collab-detail-panel">
+              <div className="collab-detail-header">
+                <h4>{selectedNode.name}</h4>
+                <button type="button" className="drawer-close-btn" onClick={() => setSelectedNode(null)}>✕</button>
+              </div>
+              <div className="collab-detail-body">
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "4px" }}>
+                  {selectedNodeOrdering && <span className="collab-badge collab-strong">CMS Ordering Eligible</span>}
+                  {selectedNodeAco.length > 0 && <span className="collab-badge collab-moderate">ACO: {selectedNodeAco[0].aco_name}</span>}
+                </div>
+                <div className="collab-detail-row"><span>Specialty</span><span style={{ color: specialtyColor(selectedNode.specialty) }}>{selectedNode.specialty || "—"}</span></div>
+                <div className="collab-detail-row"><span>Location</span><span>{selectedNode.city}, {selectedNode.state}</span></div>
+                <div className="collab-detail-row"><span>NPI</span><span>{selectedNode.npi}</span></div>
+                {!selectedNode.isFocal && <>
+                  <div className="collab-detail-row"><span>Collaboration Score</span><strong>{fmtScore(selectedNode.collaborationScore)} — {selectedNode.collaborationType === "same_group" ? "Same Practice Group" : scoreLabel(selectedNode.collaborationScore)}</strong></div>
+                  {selectedNode.collaborationType && <div className="collab-detail-row"><span>Connection Type</span><span style={{ textTransform: "capitalize" }}>{selectedNode.collaborationType.replace(/_/g, " ")}</span></div>}
+                  <div className="collab-detail-row"><span>Drug Overlap</span><span>{fmtScore(selectedNode.drugOverlapScore)}</span></div>
+                  <div className="collab-detail-row"><span>HCPCS Overlap</span><span>{fmtScore(selectedNode.hcpcsOverlapScore)}</span></div>
+                  <div className="collab-detail-row"><span>Shared Bene Proxy</span><span>{fmtScore(selectedNode.sharedBeneProxy)}</span></div>
+                  <div className="collab-detail-row"><span>Total Claims</span><span>{fmt(selectedNode.totalClaims)}</span></div>
+                  {selectedNode.cancerTypes && selectedNode.cancerTypes.length > 0 && (
+                    <div className="collab-detail-section">
+                      <div className="collab-detail-label">Inferred Cancer Types</div>
+                      <CancerTypeBadges cancerTypes={selectedNode.cancerTypes} />
+                    </div>
+                  )}
+                  {selectedNode.sharedDrugs.length > 0 && (
+                    <div className="collab-detail-section">
+                      <div className="collab-detail-label">Shared Drugs</div>
+                      <div className="collab-drug-list">
+                        {selectedNode.sharedDrugs.map(d => <span key={d} className="collab-drug-tag">{d}</span>)}
+                      </div>
+                    </div>
+                  )}
+                </>}
+                {selectedNode.isFocal && network && (
+                  <div className="collab-detail-section">
+                    {network.focalProvider.groupName && (
+                      <div className="collab-detail-row"><span>Practice Group</span><span>{network.focalProvider.groupName}</span></div>
+                    )}
+                    {network.focalProvider.hcpcsCodes.length > 0 && (
+                      <div className="collab-detail-row"><span>HCPCS Codes</span><span>{network.focalProvider.hcpcsCodes.length} codes on file</span></div>
+                    )}
+                    {network.focalProvider.cancerTypes?.length > 0 && (
+                      <>
+                        <div className="collab-detail-label">Inferred Cancer Types</div>
+                        <CancerTypeBadges cancerTypes={network.focalProvider.cancerTypes} />
+                      </>
+                    )}
+                    <div className="collab-detail-label" style={{ marginTop: "12px" }}>Drug Portfolio ({year})</div>
+                    <div className="collab-drug-list">
+                      {network.focalProvider.drugs.map(d => <span key={d} className="collab-drug-tag">{d}</span>)}
+                    </div>
+                    {network.focalProvider.prescriptionHistory.length > 0 && (
+                      <>
+                        <div className="collab-detail-label" style={{ marginTop: "12px" }}>Full Prescription History</div>
+                        <table className="analyzer-table compact-table">
+                          <thead><tr><th>Drug</th><th>Year</th><th>Claims</th><th>Cost</th></tr></thead>
+                          <tbody>
+                            {network.focalProvider.prescriptionHistory.map((rx, i) => (
+                              <tr key={i}>
+                                <td>{rx.drug_name}</td>
+                                <td>{rx.year}</td>
+                                <td className="num">{fmt(rx.total_claim_count)}</td>
+                                <td className="num">{fmtUsd(rx.total_drug_cost)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hospital Network Tab
+// ─────────────────────────────────────────────────────────────────────────────
+
+function HospitalNetworkTab({ year, state }: { year: string; state: string }) {
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState<HospitalSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [network, setNetwork] = useState<HospitalNetwork | null>(null);
+  const [networkLoading, setNetworkLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [selectedProvider, setSelectedProvider] = useState<HospitalProvider | null>(null);
+  const [expandedAffiliates, setExpandedAffiliates] = useState(false);
+  const [showAllDrugs, setShowAllDrugs] = useState(false);
+  const [showAllLabs, setShowAllLabs] = useState(false);
+
+  const doSearch = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    setSearchLoading(true);
+    try {
+      const res = await api.searchHospitals(q, state || undefined);
+      setSearchResults(res.hospitals);
+    } catch (e: any) {
+      setError(e.message || "Search failed");
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [state]);
+
+  const loadNetwork = async (ccn: string) => {
+    setNetworkLoading(true);
+    setError("");
+    setSearchResults([]);
+    setSelectedProvider(null);
+    try {
+      const net = await api.getHospitalNetwork(ccn, year || undefined);
+      setNetwork(net);
+    } catch (e: any) {
+      setError(e.message || "Failed to load hospital network");
+    } finally {
+      setNetworkLoading(false);
+    }
+  };
+
+  const HOSPITAL_SPECIALTIES: Array<{ key: keyof HospitalNetwork["providers"]; label: string; icon: string; color: string }> = [
+    { key: "oncology",   label: "Medical Oncology / Hematology",  icon: "💊", color: "#3b82f6" },
+    { key: "hematology", label: "Hematology",                     icon: "🩸", color: "#8b5cf6" },
+    { key: "surgery",    label: "Surgical Oncology & Surgery",     icon: "🔪", color: "#22c55e" },
+    { key: "radiology",  label: "Radiology",                      icon: "🩻", color: "#06b6d4" },
+    { key: "pathology",  label: "Pathology",                      icon: "🔬", color: "#eab308" },
+    { key: "midlevels",  label: "Mid-Levels (NP / PA)",           icon: "🩺", color: "#f97316" },
+    { key: "referrers",  label: "Inferred Referring Providers",    icon: "↗",  color: "#94a3b8" },
+  ];
+
+  return (
+    <div className="analyzer-tab-body">
+      <div className="collab-search-bar">
+        <input
+          type="text"
+          className="analyzer-input collab-search-input"
+          placeholder="Search hospital by name…"
+          value={searchQ}
+          onChange={e => { setSearchQ(e.target.value); doSearch(e.target.value); }}
+          onKeyDown={e => { if (e.key === "Enter") doSearch(searchQ); }}
+        />
+        {searchLoading && <span className="analyzer-loading" style={{ padding: "0 12px" }}>Searching…</span>}
+      </div>
+
+      {searchResults.length > 0 && (
+        <div className="collab-search-results">
+          {searchResults.map(h => (
+            <div key={h.ccn} className="collab-search-item" onClick={() => { setSearchQ(h.name); loadNetwork(h.ccn); }}>
+              <strong>{h.name}</strong>
+              <span className="collab-search-meta">{h.hospital_type} · {h.city}, {h.state}</span>
+              {h.health_system && <span className="collab-search-npi">System: {h.health_system}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && <div className="analyzer-error">{error}</div>}
+      {networkLoading && <div className="analyzer-loading" style={{ padding: "40px", textAlign: "center" }}>Building hospital network…</div>}
+
+      {!network && !networkLoading && !error && (
+        <div className="collab-empty-state">
+          <div className="collab-empty-icon">🏥</div>
+          <h3>Hospital Network Analysis</h3>
+          <p>Search for a hospital to discover its full oncology care team — affiliated physicians by specialty, mid-levels (NP/PA), and inferred referring providers. Affiliated hospitals in the same health system are included automatically.</p>
+          <div className="collab-score-legend">
+            <h4>What you'll see</h4>
+            <div className="collab-legend-row"><strong>Core Team</strong> — Medical oncology, hematology, surgical oncology, radiation oncology, pathology, radiology</div>
+            <div className="collab-legend-row"><strong>Mid-Levels</strong> — Nurse practitioners and physician assistants affiliated with the hospital</div>
+            <div className="collab-legend-row"><strong>Inferred Referrers</strong> — Internal medicine, gastroenterology, pulmonology, urology and other specialties likely to refer oncology patients</div>
+            <div className="collab-legend-row"><strong>Prescribing Data</strong> — Crossreferenced with Medicare Part D to show top oncology drugs and companion diagnostic requirements</div>
+          </div>
+          <div className="analyzer-callout" style={{ marginTop: "16px" }}>
+            <strong>Data required:</strong> Run <code>npm run download:hospital</code> then <code>npm run process:hospital</code> then <code>npm run upload -- --hospital</code> in the <code>etl/</code> folder to load hospital data.
+          </div>
+        </div>
+      )}
+
+      {network && !networkLoading && (
+        <div className="collab-network-layout">
+          <div className="collab-network-main">
+            {/* Hospital header */}
+            <div className="collab-network-header">
+              <div>
+                <div className="collab-focal-name">🏥 {network.hospital.name}</div>
+                <div className="collab-focal-meta">
+                  {network.hospital.hospital_type} · {network.hospital.city}, {network.hospital.state} {network.hospital.zip}
+                  {network.hospital.health_system && ` · System: ${network.hospital.health_system}`}
+                </div>
+                <div className="collab-focal-stats">
+                  <span>{fmt(network.prescribingHighlights.totalProviders)} affiliated providers</span>
+                  <span>{network.affiliateHospitals.length} affiliate hospitals</span>
+                  <span>{network.prescribingHighlights.companionDxCount} providers with companion Dx drugs</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Affiliate hospitals */}
+            {network.affiliateHospitals.length > 0 && (
+              <div className="hospital-affiliates-section">
+                <button
+                  type="button"
+                  className="analyzer-btn-outline"
+                  onClick={() => setExpandedAffiliates(v => !v)}
+                  style={{ marginBottom: "8px" }}
+                >
+                  {expandedAffiliates ? "▾" : "▸"} {network.affiliateHospitals.length} Affiliated Hospitals
+                  {network.hospital.health_system && ` (${network.hospital.health_system})`}
+                </button>
+                {expandedAffiliates && (
+                  <div className="hospital-affiliates-list">
+                    {network.affiliateHospitals.map(a => (
+                      <div key={a.ccn} className="hospital-affiliate-card" onClick={() => { setSearchQ(a.name); loadNetwork(a.ccn); }} style={{ cursor: "pointer" }}>
+                        <div className="affiliate-name">{a.name}</div>
+                        <div className="affiliate-location">{a.city}, {a.state}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Prescribing highlights — all drugs */}
+            {network.prescribingHighlights.allDrugs.length > 0 && (
+              <div className="hospital-rx-highlights">
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+                  <h4 style={{ margin: 0 }}>Oncology Drugs Prescribed at This Hospital ({network.prescribingHighlights.allDrugs.length} total)</h4>
+                  {network.prescribingHighlights.allDrugs.length > 8 && (
+                    <button type="button" className="analyzer-btn-outline" style={{ fontSize: "11px", padding: "2px 8px" }}
+                      onClick={() => setShowAllDrugs(v => !v)}>
+                      {showAllDrugs ? "Show fewer" : `Show all ${network.prescribingHighlights.allDrugs.length}`}
+                    </button>
+                  )}
+                </div>
+                <div className="analyzer-bar-chart">
+                  {(showAllDrugs ? network.prescribingHighlights.allDrugs : network.prescribingHighlights.allDrugs.slice(0, 8)).map(d => (
+                    <div className="analyzer-bar-row" key={d.drug}>
+                      <div className="analyzer-bar-label">
+                        <span className="lab-name">{d.drug}</span>
+                        {d.companionDx && <span className="companion-badge">Companion Dx</span>}
+                      </div>
+                      <MiniBar value={d.claims} max={network.prescribingHighlights.allDrugs[0].claims} />
+                      <div className="analyzer-bar-value">{fmt(d.claims)} claims · {d.providers} providers</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Lab testing — NGS/IHC/FISH at this hospital */}
+            {network.labTesting.length > 0 && (
+              <div className="hospital-rx-highlights">
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+                  <h4 style={{ margin: 0 }}>NGS / IHC / FISH Lab Testing ({network.labTesting.length} entries)</h4>
+                  {network.labTesting.length > 6 && (
+                    <button type="button" className="analyzer-btn-outline" style={{ fontSize: "11px", padding: "2px 8px" }}
+                      onClick={() => setShowAllLabs(v => !v)}>
+                      {showAllLabs ? "Show fewer" : `Show all ${network.labTesting.length}`}
+                    </button>
+                  )}
+                </div>
+                <div className="analyzer-table-wrap">
+                  <table className="analyzer-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>Lab / Provider</th>
+                        <th>Location</th>
+                        <th>Test Type</th>
+                        <th>HCPCS</th>
+                        <th>Services</th>
+                        <th>Patients</th>
+                        <th>Affiliated</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(showAllLabs ? network.labTesting : network.labTesting.slice(0, 6)).map((lab, i) => (
+                        <tr key={`${lab.npi}-${lab.hcpcsCode}-${i}`}>
+                          <td><strong>{lab.name || lab.npi}</strong><div style={{ fontSize: "11px", color: "#94a3b8" }}>NPI: {lab.npi}</div></td>
+                          <td>{lab.city}, {lab.state}</td>
+                          <td><span className={`collab-badge collab-${lab.testCategory === "NGS" ? "strong" : "moderate"}`}>{lab.testCategory}</span></td>
+                          <td title={lab.hcpcsDescription} className="mono">{lab.hcpcsCode}</td>
+                          <td className="num">{fmt(lab.totalServices)}</td>
+                          <td className="num">{fmt(lab.totalPatients)}</td>
+                          <td>{lab.isHospitalAffiliated ? <span className="collab-badge collab-strong">Yes</span> : <span style={{ color: "#64748b", fontSize: "11px" }}>Geo only</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Provider specialty pods */}
+            <div className="care-team-grid">
+              {HOSPITAL_SPECIALTIES.map(({ key, label, icon, color }) => {
+                const members = network.providers[key] || [];
+                return (
+                  <div key={key} className="care-team-pod" style={{ borderTopColor: color }}>
+                    <div className="pod-header">
+                      <span className="pod-icon">{icon}</span>
+                      <span className="pod-label" style={{ color }}>{label}</span>
+                      {members.length > 0 && <span className="pod-count">{members.length}</span>}
+                    </div>
+                    {members.length === 0 ? (
+                      <div className="pod-empty">No {label.toLowerCase()} found</div>
+                    ) : (
+                      members.slice(0, 6).map(p => (
+                        <div key={p.npi} className="pod-member" onClick={() => setSelectedProvider(p)}>
+                          <div className="pod-member-name">{p.name}</div>
+                          <div className="pod-member-meta">{p.credentials && `${p.credentials} · `}{p.city}, {p.state}</div>
+                          {p.totalClaims > 0 && (
+                            <div className="pod-member-footer">
+                              <span className="collab-badge collab-moderate">{fmt(p.totalClaims)} claims</span>
+                              {p.hasCompanionDx && <span className="companion-badge" style={{ fontSize: "10px" }}>Companion Dx</span>}
+                            </div>
+                          )}
+                          {p.drugs.length > 0 && (
+                            <div className="pod-member-drugs">{p.drugs.slice(0, 2).join(", ")}{p.drugs.length > 2 ? ` +${p.drugs.length - 2}` : ""}</div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                    {members.length > 6 && (
+                      <div className="pod-more">+{members.length - 6} more</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Provider detail panel */}
+          {selectedProvider && (
+            <div className="collab-detail-panel">
+              <div className="collab-detail-header">
+                <h4>{selectedProvider.name}</h4>
+                <button type="button" className="drawer-close-btn" onClick={() => setSelectedProvider(null)}>✕</button>
+              </div>
+              <div className="collab-detail-body">
+                <div className="collab-detail-row"><span>Specialty</span><span>{selectedProvider.specialty || "—"}</span></div>
+                <div className="collab-detail-row"><span>Credentials</span><span>{selectedProvider.credentials || "—"}</span></div>
+                <div className="collab-detail-row"><span>Location</span><span>{selectedProvider.city}, {selectedProvider.state} {selectedProvider.zip}</span></div>
+                <div className="collab-detail-row"><span>NPI</span><span>{selectedProvider.npi}</span></div>
+                <div className="collab-detail-row"><span>Affiliated Hospital</span><span>{selectedProvider.affiliatedHospital}</span></div>
+                {selectedProvider.totalClaims > 0 && (
+                  <div className="collab-detail-row"><span>Total Claims ({year})</span><span>{fmt(selectedProvider.totalClaims)}</span></div>
+                )}
+                {selectedProvider.drugs.length > 0 && (
+                  <div className="collab-detail-section">
+                    <div className="collab-detail-label">Oncology Drugs ({year})</div>
+                    <div className="collab-drug-list">
+                      {selectedProvider.drugs.map(d => <span key={d} className="collab-drug-tag">{d}</span>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -839,7 +1762,9 @@ export function AnalyzerPage() {
     { id: "prescribers", label: "Oncology Prescribers" },
     { id: "open-payments", label: "Open Payments / KOLs" },
     { id: "medicaid", label: "Medicaid Utilization" },
-    { id: "prospects", label: "Prospect List ★" }
+    { id: "prospects", label: "Prospect List ★" },
+    { id: "collaboration", label: "Collaboration Network 🔬" },
+    { id: "hospital-network", label: "Hospital Network 🏥" },
   ];
 
   return (
@@ -876,9 +1801,15 @@ export function AnalyzerPage() {
             Search
             <input
               type="text"
-              placeholder="Name, NPI…"
+              placeholder="Name, NPI… (Enter = all states/years)"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && search.trim()) {
+                  setState("");
+                  setYear("");
+                }
+              }}
               className="analyzer-input"
             />
           </label>
@@ -904,6 +1835,8 @@ export function AnalyzerPage() {
         {activeTab === "open-payments" && <OpenPaymentsTab year={year} state={state} search={search} onCrossRef={setCrossRefNpi} />}
         {activeTab === "medicaid" && <MedicaidTab year={year} state={state} />}
         {activeTab === "prospects" && <ProspectsTab year={year} state={state} />}
+        {activeTab === "collaboration" && <CollaborationTab year={year} state={state} />}
+        {activeTab === "hospital-network" && <HospitalNetworkTab year={year} state={state} />}
       </div>
 
       {crossRefNpi && (

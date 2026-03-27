@@ -492,6 +492,183 @@ export interface CrossReferenceResponse {
   provider: { name: string; city: string; state: string; specialty: string } | null;
   prescriptions: OncologyPrescriberRecord[];
   openPayments: OpenPaymentRecord[];
+  ngsLabs: NgsLabRecord[];
+}
+
+// ─── Collaboration Network ───────────────────────────────────────────────────
+
+export interface CancerTypeYear {
+  type: string;
+  years: number[];
+}
+
+export interface CollaboratorNode {
+  npi: string;
+  name: string;
+  city: string;
+  state: string;
+  specialty: string;
+  specialtyType?: string;
+  sharedDrugs: string[];
+  totalClaims: number;
+  beneCnt: number;
+  drugOverlapScore: number;
+  hcpcsOverlapScore: number;
+  sharedBeneProxy: number;
+  collaborationScore: number;
+  collaborationType?: "same_group" | "hcpcs_and_drug" | "hcpcs_overlap" | "drug_overlap" | "cross_specialty";
+  cancerTypes?: CancerTypeYear[];
+  isFocal?: boolean;
+}
+
+export interface CollaborationEdge {
+  source: string;
+  target: string;
+  score: number;
+  sharedDrugs: string[];
+  drugOverlapScore: number;
+  hcpcsOverlapScore: number;
+  sharedBeneProxy: number;
+  collaborationType?: string;
+}
+
+export interface CollaborationNetwork {
+  focalProvider: CollaboratorNode & {
+    drugs: string[];
+    hcpcsCodes: string[];
+    groupPacId: string | null;
+    groupName: string | null;
+    specialtyType: string;
+    cancerTypes: CancerTypeYear[];
+    prescriptionHistory: OncologyPrescriberRecord[];
+    openPayments: OpenPaymentRecord[];
+  };
+  collaborators: CollaboratorNode[];
+  edges: CollaborationEdge[];
+}
+
+export interface CollaborationProviderSearchResult {
+  npi: string;
+  name: string;
+  city: string;
+  state: string;
+  specialty: string;
+}
+
+// ─── Physician Locations ─────────────────────────────────────────────────────
+
+export interface PhysicianLocation {
+  npi: string;
+  provider_name: string;
+  specialty: string;
+  credentials: string;
+  address_line1: string;
+  city: string;
+  state: string;
+  zip: string;
+  phone: string;
+  facility_name: string | null;
+  org_pac_id: string | null;
+}
+
+// ─── Hospital Network ─────────────────────────────────────────────────────────
+
+export interface HospitalSearchResult {
+  ccn: string;
+  pac_id: string;
+  name: string;
+  city: string;
+  state: string;
+  zip: string;
+  hospital_type: string;
+  health_system: string;
+}
+
+export interface HospitalProvider {
+  npi: string;
+  name: string;
+  specialty: string;
+  specialtyType: string;
+  credentials: string;
+  city: string;
+  state: string;
+  zip: string;
+  totalClaims: number;
+  drugs: string[];
+  hasCompanionDx: boolean;
+  affiliatedHospital: string;
+}
+
+export interface HospitalLabRecord {
+  npi: string;
+  name: string;
+  city: string;
+  state: string;
+  testCategory: "NGS" | "IHC" | "FISH";
+  hcpcsCode: string;
+  hcpcsDescription: string;
+  totalServices: number;
+  totalPatients: number;
+  isHospitalAffiliated: boolean;
+}
+
+export interface HospitalNetwork {
+  hospital: HospitalSearchResult;
+  affiliateHospitals: HospitalSearchResult[];
+  providers: {
+    oncology: HospitalProvider[];
+    hematology: HospitalProvider[];
+    surgery: HospitalProvider[];
+    radiology: HospitalProvider[];
+    pathology: HospitalProvider[];
+    midlevels: HospitalProvider[];
+    referrers: HospitalProvider[];
+  };
+  prescribingHighlights: {
+    allDrugs: Array<{ drug: string; claims: number; providers: number; companionDx: boolean }>;
+    companionDxCount: number;
+    totalProviders: number;
+  };
+  labTesting: HospitalLabRecord[];
+}
+
+// ─── Part B Services ──────────────────────────────────────────────────────────
+
+export interface PartBServiceRecord {
+  npi: string;
+  provider_name: string;
+  provider_type: string;
+  city: string;
+  state: string;
+  zip: string;
+  hcpcs_code: string;
+  hcpcs_description: string;
+  service_category: "NGS" | "CHEMO" | "RADIATION" | "PATHOLOGY";
+  place_of_service: string;
+  total_services: number;
+  total_unique_benes: number;
+  avg_submitted_charge: number;
+  avg_medicare_payment: number;
+  year: number;
+}
+
+// ─── ACO ──────────────────────────────────────────────────────────────────────
+
+export interface AcoMembership {
+  aco_id: string;
+  aco_name: string;
+  practice_name: string;
+  city: string;
+  state: string;
+  performance_year: number;
+}
+
+// ─── Order & Referring ────────────────────────────────────────────────────────
+
+export interface OrderReferringStatus {
+  eligible: boolean;
+  provider: { npi: string; last_name: string; first_name: string; org_name: string; state: string; provider_type: string } | null;
+  available: boolean;
 }
 
 

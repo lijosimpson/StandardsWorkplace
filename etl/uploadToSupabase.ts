@@ -47,6 +47,8 @@ interface UploadConfig {
   file: string;
   table: string;
   description: string;
+  upsertOn?: string;   // column(s) to conflict on for upsert (e.g. "npi,year")
+  clearFirst?: boolean; // truncate table before uploading
 }
 
 const UPLOAD_CONFIGS: UploadConfig[] = [
@@ -60,12 +62,35 @@ const UPLOAD_CONFIGS: UploadConfig[] = [
   { file: "medicaid_utilization_2023.json", table: "medicaid_drug_utilization", description: "Medicaid utilization 2023" }
 ];
 
-async function insertBatchWithRetry(table: string, batch: object[], batchNum: number, maxRetries = 3): Promise<boolean> {
+// Phase 2: Collaboration network tables (run with --collaboration flag)
+const COLLABORATION_CONFIGS: UploadConfig[] = [
+  { file: "oncology_providers_2022.json", table: "oncology_provider_profiles", description: "Oncology provider HCPCS profiles 2022", clearFirst: true, upsertOn: "npi,year" },
+  { file: "oncology_providers_2023.json", table: "oncology_provider_profiles", description: "Oncology provider HCPCS profiles 2023", upsertOn: "npi,year" },
+  { file: "oncology_group_affiliations.json", table: "physician_group_affiliations", description: "Physician group affiliations (DAC)", clearFirst: true },
+];
+
+// Phase 3: Hospital network tables (run with --hospital flag)
+const HOSPITAL_CONFIGS: UploadConfig[] = [
+  { file: "physician_locations.json", table: "physician_locations", description: "Physician practice locations (DAC all addresses)", clearFirst: true },
+  { file: "hospital_directory.json", table: "hospital_directory", description: "Hospital directory (Care Compare)", clearFirst: true },
+  { file: "physician_hospital_affiliations.json", table: "physician_hospital_affiliations", description: "Physician-hospital affiliations (DAC)", clearFirst: true },
+];
+
+// Phase 4: Enrichment tables (run with --enrichment flag)
+const ENRICHMENT_CONFIGS: UploadConfig[] = [
+  { file: "partb_physician_services.json", table: "partb_physician_services", description: "Part B physician services (NGS/chemo/radiation/pathology)", clearFirst: true },
+  { file: "aco_participants.json", table: "aco_participants", description: "ACO participant lists (MSSP)", clearFirst: true },
+  { file: "order_referring_providers.json", table: "order_referring_providers", description: "CMS Order and Referring eligible providers", clearFirst: true },
+];
+
+async function insertBatchWithRetry(table: string, batch: object[], batchNum: number, upsertOn?: string, maxRetries = 3): Promise<boolean> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const { error } = await supabase.from(table).insert(batch);
+    const { error } = upsertOn
+      ? await supabase.from(table).upsert(batch as any, { onConflict: upsertOn })
+      : await supabase.from(table).insert(batch);
     if (!error) return true;
     if (attempt < maxRetries) {
-      await new Promise((r) => setTimeout(r, attempt * 1000)); // 1s, 2s backoff
+      await new Promise((r) => setTimeout(r, attempt * 1000));
     } else {
       console.warn(`\n    Batch ${batchNum} failed after ${maxRetries} attempts: ${error.message}`);
     }
@@ -93,6 +118,12 @@ async function uploadFile(config: UploadConfig): Promise<void> {
     return;
   }
 
+  if (config.clearFirst) {
+    process.stdout.write(`  Clearing ${config.table} ...`);
+    await clearTable(config.table);
+    console.log(" done");
+  }
+
   console.log(`  Uploading ${config.description} (${rows.length.toLocaleString()} rows) → ${config.table}`);
 
   let uploaded = 0;
@@ -101,7 +132,7 @@ async function uploadFile(config: UploadConfig): Promise<void> {
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
     const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-    const ok = await insertBatchWithRetry(config.table, batch, batchNum);
+    const ok = await insertBatchWithRetry(config.table, batch, batchNum, config.upsertOn);
     if (ok) {
       uploaded += batch.length;
     } else {
@@ -117,7 +148,25 @@ async function main() {
   console.log("=== Upload to Supabase ===\n");
   console.log(`Project: ${SUPABASE_URL}\n`);
 
-  for (const config of UPLOAD_CONFIGS) {
+  const isCollaboration = process.argv.includes("--collaboration");
+  const isHospital = process.argv.includes("--hospital");
+  const isEnrichment = process.argv.includes("--enrichment");
+
+  let configs: UploadConfig[];
+  if (isHospital) {
+    configs = HOSPITAL_CONFIGS;
+    console.log("Mode: Hospital network tables (physician_locations, hospital_directory, physician_hospital_affiliations)\n");
+  } else if (isCollaboration) {
+    configs = COLLABORATION_CONFIGS;
+    console.log("Mode: Collaboration tables (oncology_provider_profiles, physician_group_affiliations)\n");
+  } else if (isEnrichment) {
+    configs = ENRICHMENT_CONFIGS;
+    console.log("Mode: Enrichment tables (partb_physician_services, aco_participants, order_referring_providers)\n");
+  } else {
+    configs = UPLOAD_CONFIGS;
+  }
+
+  for (const config of configs) {
     await uploadFile(config);
   }
 

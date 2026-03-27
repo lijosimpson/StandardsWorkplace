@@ -29,7 +29,9 @@ import type {
   OpenPaymentsSummary,
   ProspectRecord,
   CrossReferenceResponse,
-  AnalyzerFilters
+  AnalyzerFilters,
+  CollaborationNetwork,
+  CollaborationProviderSearchResult
 } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE || "http://localhost:4000/api").replace(/\/$/, "");
@@ -720,6 +722,53 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  searchCollaborationProviders: async (q: string, state?: string, year?: string): Promise<{ providers: CollaborationProviderSearchResult[] }> => {
+    const params = new URLSearchParams({ q });
+    if (state) params.set("state", state);
+    if (year) params.set("year", year);
+    const res = await fetch(`${API_BASE}/analyzer/collaboration/search?${params}`);
+    return parse(res);
+  },
+
+  getCollaborationNetwork: async (npi: string, year?: string, focalCity?: string, focalState?: string, focalZip?: string): Promise<CollaborationNetwork> => {
+    const params = new URLSearchParams({ npi });
+    if (year) params.set("year", year);
+    if (focalCity) params.set("focal_city", focalCity);
+    if (focalState) params.set("focal_state", focalState);
+    if (focalZip) params.set("focal_zip", focalZip);
+    const res = await fetch(`${API_BASE}/analyzer/collaboration/network?${params}`);
+    return parse(res);
+  },
+
+  getPhysicianLocations: async (npi: string): Promise<{ locations: import("./types").PhysicianLocation[] }> => {
+    const res = await fetch(`${API_BASE}/analyzer/physician/locations?npi=${encodeURIComponent(npi)}`);
+    return parse(res);
+  },
+
+  getCollaborationNetworkAtLocation: async (npi: string, year?: string, focalCity?: string, focalState?: string, focalZip?: string): Promise<CollaborationNetwork> => {
+    const params = new URLSearchParams({ npi });
+    if (year) params.set("year", year);
+    if (focalCity) params.set("focal_city", focalCity);
+    if (focalState) params.set("focal_state", focalState);
+    if (focalZip) params.set("focal_zip", focalZip);
+    const res = await fetch(`${API_BASE}/analyzer/collaboration/network?${params}`);
+    return parse(res);
+  },
+
+  searchHospitals: async (q: string, state?: string): Promise<{ hospitals: import("./types").HospitalSearchResult[] }> => {
+    const params = new URLSearchParams({ q });
+    if (state) params.set("state", state);
+    const res = await fetch(`${API_BASE}/analyzer/hospital/search?${params}`);
+    return parse(res);
+  },
+
+  getHospitalNetwork: async (ccn: string, year?: string): Promise<import("./types").HospitalNetwork> => {
+    const params = new URLSearchParams({ ccn });
+    if (year) params.set("year", year);
+    const res = await fetch(`${API_BASE}/analyzer/hospital/network?${params}`);
+    return parse(res);
+  },
+
   downloadProspectListCsv: async (filters: { state?: string; drug?: string; minClaims?: string; year?: string }): Promise<void> => {
     const params = new URLSearchParams({ format: "csv" });
     if (filters.state) params.set("state", filters.state);
@@ -740,7 +789,29 @@ export const api = {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }
+  },
+
+  getPhysicianPartBServices: async (npi: string, year?: string): Promise<{ services: import("./types").PartBServiceRecord[]; available: boolean }> => {
+    const params = new URLSearchParams({ npi });
+    if (year) params.set("year", year);
+    const res = await fetch(`${API_BASE}/analyzer/physician/partb-services?${params}`);
+    return parse(res);
+  },
+
+  getPhysicianAco: async (npi: string): Promise<{ acos: import("./types").AcoMembership[]; available: boolean }> => {
+    const res = await fetch(`${API_BASE}/analyzer/physician/aco?npi=${encodeURIComponent(npi)}`);
+    return parse(res);
+  },
+
+  getAcoPeers: async (acoId: string): Promise<{ peers: import("./types").AcoMembership[] }> => {
+    const res = await fetch(`${API_BASE}/analyzer/physician/aco?aco_id=${encodeURIComponent(acoId)}`);
+    return parse(res);
+  },
+
+  getOrderingStatus: async (npi: string): Promise<import("./types").OrderReferringStatus> => {
+    const res = await fetch(`${API_BASE}/analyzer/physician/ordering-status?npi=${encodeURIComponent(npi)}`);
+    return parse(res);
+  },
 };
 
 

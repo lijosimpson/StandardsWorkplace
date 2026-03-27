@@ -1762,3 +1762,316 @@ button:disabled {
 
 
 
+
+/* ─── Collaboration Network ──────────────────────────────────────────────── */
+
+.collab-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.collab-search-input { width: 360px; font-size: 0.95rem; }
+
+.collab-search-results {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  z-index: 50;
+  position: relative;
+}
+.collab-search-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+  transition: background 0.15s;
+}
+.collab-search-item:hover { background: #f0f7ff; }
+.collab-search-item strong { min-width: 180px; font-size: 0.9rem; }
+.collab-search-meta { font-size: 0.82rem; color: #64748b; flex: 1; }
+.collab-search-npi { font-size: 0.78rem; color: #94a3b8; font-family: monospace; }
+
+.collab-empty-state {
+  text-align: center;
+  padding: 48px 32px;
+  color: #475569;
+}
+.collab-empty-icon { font-size: 3rem; margin-bottom: 16px; }
+.collab-empty-state h3 { margin: 0 0 8px; font-size: 1.2rem; color: #1e293b; }
+.collab-empty-state p { max-width: 520px; margin: 0 auto 24px; font-size: 0.9rem; line-height: 1.6; }
+
+.collab-score-legend {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px 20px;
+  max-width: 540px;
+  margin: 0 auto;
+  text-align: left;
+}
+.collab-score-legend h4 { margin: 0 0 10px; font-size: 0.85rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.collab-legend-row { display: flex; align-items: center; gap: 10px; font-size: 0.88rem; margin-bottom: 6px; }
+.collab-legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+.collab-network-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 600px;
+}
+.collab-network-main { flex: 1; min-width: 0; }
+.collab-detail-panel {
+  width: 300px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  overflow: hidden;
+  align-self: flex-start;
+  position: sticky;
+  top: 16px;
+}
+.collab-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f0f7ff;
+  border-bottom: 1px solid #e2e8f0;
+}
+.collab-detail-header h4 { margin: 0; font-size: 0.9rem; color: #1e293b; }
+.collab-detail-body { padding: 12px 16px; overflow-y: auto; max-height: 560px; }
+.collab-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.85rem;
+}
+.collab-detail-row span:first-child { color: #64748b; flex-shrink: 0; }
+.collab-detail-section { padding-top: 12px; }
+.collab-detail-label { font-size: 0.78rem; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; margin-bottom: 8px; }
+.collab-drug-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.collab-drug-tag {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.collab-network-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.collab-focal-name { font-size: 1.1rem; font-weight: 700; color: #1e293b; }
+.collab-focal-meta { font-size: 0.85rem; color: #64748b; margin-top: 2px; }
+.collab-focal-stats {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: #475569;
+}
+.collab-focal-stats span::before { content: "• "; }
+.collab-focal-stats span:first-child::before { content: ""; }
+
+.collab-view-toggle { display: flex; gap: 6px; }
+.analyzer-btn-outline.active {
+  background: #1d4ed8;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+.collab-graph-wrap {
+  background: #0f172a;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #1e293b;
+}
+.collab-graph-svg {
+  width: 100%;
+  height: 560px;
+  display: block;
+}
+.collab-node { transition: opacity 0.15s; }
+.collab-node:hover circle:last-of-type { filter: brightness(1.3); }
+
+.collab-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.collab-badge.collab-strong { background: #dcfce7; color: #166534; }
+.collab-badge.collab-moderate { background: #fef9c3; color: #854d0e; }
+.collab-badge.collab-weak { background: #f1f5f9; color: #475569; }
+.collab-badge.collab-low { background: #f1f5f9; color: #94a3b8; }
+
+/* ── Care Team View ───────────────────────────────────────────────────────── */
+.care-team-view { padding: 0 4px; }
+
+.care-team-completeness {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.care-team-coverage-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+.care-team-coverage-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.care-team-spec-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 12px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.care-team-spec-badge.missing { opacity: 0.45; }
+.care-team-score {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e2e8f0;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.care-team-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .care-team-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.care-team-pod {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-top: 3px solid #334155;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.pod-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1e293b;
+  background: #0a1121;
+}
+.pod-icon { font-size: 15px; }
+.pod-label { font-size: 12px; font-weight: 700; flex: 1; }
+.pod-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  background: #1e293b;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.pod-empty {
+  padding: 20px 12px;
+  font-size: 11px;
+  color: #475569;
+  text-align: center;
+  font-style: italic;
+}
+.pod-member {
+  padding: 8px 12px;
+  border-bottom: 1px solid #1e293b;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.pod-member:last-child { border-bottom: none; }
+.pod-member:hover { background: #1e293b; }
+.pod-member-name { font-size: 12px; font-weight: 600; color: #e2e8f0; }
+.pod-member-meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+.pod-member-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.pod-conn-type { font-size: 10px; color: #475569; font-style: italic; }
+
+/* ─── Cancer Type Badges ─────────────────────────────────────────────────── */
+.cancer-type-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+.cancer-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cancer-type-year {
+  font-size: 9px;
+  opacity: 0.75;
+  font-weight: 400;
+  background: rgba(99, 102, 241, 0.2);
+  padding: 0 3px;
+  border-radius: 4px;
+}
+.cancer-type-more {
+  background: rgba(71, 85, 105, 0.3);
+  color: #64748b;
+  border-color: rgba(71, 85, 105, 0.4);
+}
+/* Full-size badges in detail panel */
+.collab-detail-section .cancer-type-badges {
+  gap: 5px;
+  margin: 6px 0 4px;
+}
+.collab-detail-section .cancer-type-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  max-width: none;
+}
+.collab-detail-section .cancer-type-year {
+  font-size: 10px;
+}

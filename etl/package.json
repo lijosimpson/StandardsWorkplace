@@ -4,12 +4,17 @@
   "description": "ETL pipeline to download and load Medicare/Medicaid/Open Payments data into Supabase",
   "scripts": {
     "download": "ts-node downloadData.ts",
+    "download:dac": "ts-node downloadDac.ts",
     "process:partb": "ts-node processPartB.ts",
+    "process:partb:oncology": "ts-node processPartBOncologyProviders.ts",
     "process:partd": "ts-node processPartD.ts",
     "process:payments": "ts-node processOpenPayments.ts",
     "process:medicaid": "ts-node processMedicaid.ts",
+    "process:dac": "ts-node processDac.ts",
     "upload": "ts-node uploadToSupabase.ts",
-    "run": "ts-node run.ts"
+    "upload:collaboration": "ts-node uploadToSupabase.ts --collaboration",
+    "run": "ts-node run.ts",
+    "run:collaboration": "npm run process:partb:oncology && npm run download:dac && npm run process:dac && npm run upload:collaboration"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",
