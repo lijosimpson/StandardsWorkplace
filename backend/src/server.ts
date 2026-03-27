@@ -309,6 +309,13 @@ const normalizeAccreditationFramework = (value: unknown): AccreditationFramework
 
 const allowedCorsOrigins = (process.env.CORS_ORIGIN || "").split(",").map((entry) => entry.trim()).filter(Boolean);
 
+const corsOriginFn = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+  if (!origin) return cb(null, true); // non-browser / server-to-server
+  if (origin.endsWith(".vercel.app") || origin.startsWith("http://localhost")) return cb(null, true);
+  if (allowedCorsOrigins.length === 0 || allowedCorsOrigins.includes(origin)) return cb(null, true);
+  cb(new Error(`CORS: origin ${origin} not allowed`));
+};
+
 const isServerlessRuntime = Boolean(
   process.env.VERCEL ||
   process.env.VERCEL_ENV ||
@@ -371,7 +378,7 @@ const upload = multer({
   }
 });
 
-app.use(cors(allowedCorsOrigins.length === 0 ? undefined : { origin: allowedCorsOrigins }));
+app.use(cors({ origin: corsOriginFn, credentials: true }));
 app.use(express.json());
 app.use("/uploads", express.static(uploadsDir));
 
