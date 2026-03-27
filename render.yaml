@@ -3,7 +3,7 @@ services:
     name: standardsworkplace-api
     env: node
     rootDir: backend
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --prefix backend && npm run build --prefix backend
     startCommand: npm run start
     healthCheckPath: /api/health
     autoDeploy: true

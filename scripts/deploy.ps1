@@ -19,9 +19,9 @@ Write-Host "Stopping any process on port 4000..." -ForegroundColor Cyan
 $netstatOutput = netstat -ano 2>$null | Select-String ":4000 "
 foreach ($line in $netstatOutput) {
   $parts = ($line.ToString().Trim() -split "\s+")
-  $pid = $parts[-1]
-  if ($pid -match "^\d+$" -and $pid -ne "0") {
-    try { Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue } catch {}
+  $procId = $parts[-1]
+  if ($procId -match "^\d+$" -and $procId -ne "0") {
+    try { Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue } catch {}
   }
 }
 Start-Sleep -Milliseconds 500
