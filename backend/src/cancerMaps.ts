@@ -217,6 +217,83 @@ const DRUG_ENTRIES: Array<[string, string[]]> = [
   ["ENTRECTINIB",               ["Any (TRK/ROS1 Fusion+)"]],
   ["PEMBROLIZUMAB",             ["Any (TMB-H/MSI-H)"]],
 
+  // ── Late-2023 approvals (may have limited 2023 CMS claims; full data in 2024) ──
+
+  // Elranatamab-bcmm (Elrexfio) — Aug 2023 — Multiple Myeloma (BCMA x CD3 bispecific)
+  ["ELRANATAMAB",               ["Multiple Myeloma"]],
+  ["ELRANATAMAB-BCMM",          ["Multiple Myeloma"]],
+
+  // Talquetamab-tgvs (Talvey) — Aug 2023 — Multiple Myeloma (GPRC5D x CD3 bispecific)
+  ["TALQUETAMAB",               ["Multiple Myeloma"]],
+  ["TALQUETAMAB-TGVS",          ["Multiple Myeloma"]],
+
+  // Revumenib (Revuforj) — Nov 2023 — AML (KMT2A-rearranged or NUP98-rearranged)
+  ["REVUMENIB",                 ["AML (KMT2A-rearranged)", "AML (NUP98-rearranged)"]],
+
+  // Repotrectinib (Augtyro) — Nov 2023 — NSCLC (ROS1+), solid tumors (NTRK+)
+  ["REPOTRECTINIB",             ["Lung (ROS1+)", "Any (NTRK Fusion+)"]],
+
+  // Lurbinectedin (Zepzelca) — Jun 2020 — SCLC (metastatic, platinum-resistant)
+  // Approval was 2020 but adding here to ensure map coverage
+  ["LURBINECTEDIN",             ["Lung (SCLC)"]],
+
+  // ── 2024 approvals (will appear in 2024 CMS data) ────────────────────────
+
+  // NRG1 fusion-positive (Aug 2024)
+  // Generic: zenocutuzumab-zbco | Brand: Bizengri
+  ["ZENOCUTUZUMAB",             ["Lung (NRG1 Fusion+)", "Pancreatic (NRG1 Fusion+)"]],
+  ["ZENOCUTUZUMAB-ZBCO",        ["Lung (NRG1 Fusion+)", "Pancreatic (NRG1 Fusion+)"]],
+
+  // Tarlatamab-dlle (Imdelltra) — May 2024 — Extensive-stage SCLC (DLL3 x CD3 bispecific)
+  ["TARLATAMAB",                ["Lung (SCLC)"]],
+  ["TARLATAMAB-DLLE",           ["Lung (SCLC)"]],
+
+  // Inavolisib (Itovebi) — Oct 2024 — HR+/HER2- breast (PIK3CA mutated, post-CDK4/6)
+  ["INAVOLISIB",                ["Breast (PIK3CA+)"]],
+
+  // Zolbetuximab-clzb (Vyloy) — Oct 2024 — Gastric/GEJ adenocarcinoma (CLDN18.2+, HER2-)
+  ["ZOLBETUXIMAB",              ["Gastric (CLDN18.2+)", "Esophageal/GEJ (CLDN18.2+)"]],
+  ["ZOLBETUXIMAB-CLZB",         ["Gastric (CLDN18.2+)", "Esophageal/GEJ (CLDN18.2+)"]],
+
+  // Linvoseltamab-srpt (Lynozyr) — Mar 2024 — Relapsed/refractory Multiple Myeloma (BCMA x CD3)
+  ["LINVOSELTAMAB",             ["Multiple Myeloma"]],
+  ["LINVOSELTAMAB-SRPT",        ["Multiple Myeloma"]],
+
+  // Obecabtagene autoleucel (Aucatzyl) — Nov 2024 — Relapsed/refractory ALL (CD19 CAR-T)
+  ["OBECABTAGENE AUTOLEUCEL",   ["ALL"]],
+
+  // Lazertinib (Lazcluze) — Aug 2024 — NSCLC (EGFR exon 19 del or L858R) in combo with amivantamab
+  ["LAZERTINIB",                ["Lung (EGFR+)"]],
+
+  // Taletrectinib (Mivpuno) — Jun 2024 — NSCLC (ROS1+), solid tumors (NTRK+)
+  ["TALETRECTINIB",             ["Lung (ROS1+)", "Any (NTRK Fusion+)"]],
+
+  // Pivekimab sunirine (Niktimvo) — Sep 2024 — Blastic plasmacytoid dendritic cell neoplasm (BPDCN)
+  ["PIVEKIMAB SUNIRINE",        ["BPDCN"]],
+  ["PIVEKIMAB",                 ["BPDCN"]],
+
+  // ── 2025 approvals (will appear in 2025 CMS data) ────────────────────────
+
+  // Datopotamab deruxtecan (Datroway) — Jan 2025 — HR+/HER2- breast (post-CDK4/6), NSCLC (non-sq, no driver)
+  ["DATOPOTAMAB DERUXTECAN",    ["Breast (HR+)", "Lung (NSCLC non-sq)"]],
+  ["DATO-DXd",                  ["Breast (HR+)", "Lung (NSCLC non-sq)"]],
+
+  // Telisotuzumab vedotin-tllv (Emrelis) — May 2025 — Non-sq NSCLC (c-MET protein overexpression)
+  ["TELISOTUZUMAB VEDOTIN",     ["Lung (c-MET+)"]],
+  ["TELISOTUZUMAB VEDOTIN-TLLV",["Lung (c-MET+)"]],
+
+  // ── Potential near-term approvals (PDUFA dates / BLA under review as of 2025) ──
+  // These are pre-staged and will auto-categorize the moment CMS claims appear.
+
+  // Sunvozertinib (DZD9008) — NSCLC (EGFR exon 20 insertion) — PDUFA expected 2025
+  ["SUNVOZERTINIB",             ["Lung (EGFR exon 20)"]],
+
+  // Patritumab deruxtecan (HER3-DXd) — NSCLC (EGFR-mutated, post-EGFR TKI) — BLA under review 2025
+  ["PATRITUMAB DERUXTECAN",     ["Lung (EGFR+)"]],
+
+  // Tebotelimab — Lymphoma
+  // (various bispecifics under accelerated review — add as approved)
+
   // General cytotoxics
   ["CYCLOPHOSPHAMIDE",          ["Breast", "NHL", "CLL/SLL", "Multiple Myeloma", "Ovarian"]],
   ["DOXORUBICIN",               ["Breast", "NHL", "Sarcoma", "AML"]],
