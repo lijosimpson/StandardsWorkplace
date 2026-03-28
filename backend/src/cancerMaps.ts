@@ -414,15 +414,22 @@ export function inferCancerTypes(drugs: string[], hcpcsCodes: string[]): string[
 export function inferCancerTypesWithYears(
   drugRecords: Array<{ drug: string; year: number }>,
   hcpcsRecords: Array<{ code: string; year: number }>
-): Array<{ type: string; years: number[] }> {
+): Array<{ type: string; years: number[]; drugCount: number }> {
   const typeYears = new Map<string, Set<number>>();
+  // Track unique drug names per cancer type (not rows — same drug in 2 years = 1)
+  const typeDrugs = new Map<string, Set<string>>();
+  // Track unique HCPCS codes per cancer type
+  const typeHcpcs = new Map<string, Set<string>>();
 
   for (const { drug, year } of (drugRecords || [])) {
-    const cancers = DRUG_CANCER_MAP[(drug || "").toUpperCase()];
+    const upper = (drug || "").toUpperCase();
+    const cancers = DRUG_CANCER_MAP[upper];
     if (cancers) {
       for (const c of cancers) {
         if (!typeYears.has(c)) typeYears.set(c, new Set());
         typeYears.get(c)!.add(year);
+        if (!typeDrugs.has(c)) typeDrugs.set(c, new Set());
+        typeDrugs.get(c)!.add(upper);
       }
     }
   }
@@ -433,6 +440,8 @@ export function inferCancerTypesWithYears(
       for (const c of cancers) {
         if (!typeYears.has(c)) typeYears.set(c, new Set());
         typeYears.get(c)!.add(year);
+        if (!typeHcpcs.has(c)) typeHcpcs.set(c, new Set());
+        typeHcpcs.get(c)!.add(code);
       }
     }
   }
@@ -441,9 +450,17 @@ export function inferCancerTypesWithYears(
   if (typeYears.size > 1) {
     typeYears.delete("Chemotherapy");
     typeYears.delete("Chemotherapy (CNS)");
+    typeDrugs.delete("Chemotherapy");
+    typeDrugs.delete("Chemotherapy (CNS)");
   }
 
   return [...typeYears.entries()]
-    .map(([type, years]) => ({ type, years: [...years].sort((a, b) => a - b) }))
-    .sort((a, b) => a.type.localeCompare(b.type));
+    .map(([type, years]) => ({
+      type,
+      years: [...years].sort((a, b) => a - b),
+      // drugCount = unique drugs + 0.5 per unique supporting HCPCS code, floored
+      drugCount: (typeDrugs.get(type)?.size || 0) + Math.floor((typeHcpcs.get(type)?.size || 0) * 0.5)
+    }))
+    // Sort primary: drug count descending. Tie-break: alphabetical.
+    .sort((a, b) => b.drugCount - a.drugCount || a.type.localeCompare(b.type));
 }

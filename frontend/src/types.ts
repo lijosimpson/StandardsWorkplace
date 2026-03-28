@@ -500,6 +500,7 @@ export interface CrossReferenceResponse {
 export interface CancerTypeYear {
   type: string;
   years: number[];
+  drugCount: number;
 }
 
 export interface CollaboratorNode {

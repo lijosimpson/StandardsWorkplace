@@ -904,17 +904,25 @@ function specialtyTypeColor(specialtyType?: string): string {
 
 function CancerTypeBadges({ cancerTypes, compact }: { cancerTypes?: CancerTypeYear[]; compact?: boolean }) {
   if (!cancerTypes || cancerTypes.length === 0) return null;
-  const items = compact ? cancerTypes.slice(0, 3) : cancerTypes;
+  const COMPACT_LIMIT = 5;
+  const items = compact ? cancerTypes.slice(0, COMPACT_LIMIT) : cancerTypes;
   return (
     <div className="cancer-type-badges">
       {items.map(ct => (
-        <span key={ct.type} className="cancer-type-badge" title={ct.years.length > 0 ? `Treated in: ${ct.years.join(", ")}` : ct.type}>
+        <span
+          key={ct.type}
+          className="cancer-type-badge"
+          title={[
+            ct.drugCount > 0 ? `${ct.drugCount} drug${ct.drugCount === 1 ? "" : "s"}` : "",
+            ct.years.length > 0 ? `Treated in: ${ct.years.join(", ")}` : ""
+          ].filter(Boolean).join(" · ")}
+        >
           {ct.type}
-          {ct.years.length > 0 && <span className="cancer-type-year">{ct.years.length === 1 ? ct.years[0] : `${ct.years[0]}–${ct.years[ct.years.length - 1]}`}</span>}
+          {ct.drugCount > 0 && <span className="cancer-type-year">{ct.drugCount}</span>}
         </span>
       ))}
-      {compact && cancerTypes.length > 3 && (
-        <span className="cancer-type-badge cancer-type-more">+{cancerTypes.length - 3}</span>
+      {compact && cancerTypes.length > COMPACT_LIMIT && (
+        <span className="cancer-type-badge cancer-type-more">+{cancerTypes.length - COMPACT_LIMIT}</span>
       )}
     </div>
   );
