@@ -226,6 +226,179 @@ const DRUG_ENTRIES: Array<[string, string[]]> = [
   ["FLUDARABINE",               ["CLL/SLL", "NHL"]],
   ["BENDAMUSTINE",              ["CLL/SLL", "NHL"]],
   ["CHLORAMBUCIL",              ["CLL/SLL", "NHL"]],
+
+  // ── Extended indications for existing drugs ───────────────────────────────
+
+  // Pembrolizumab — all FDA-approved indications (merges with entry above)
+  ["PEMBROLIZUMAB",             ["HCC", "Esophageal", "RCC", "Merkel Cell Carcinoma", "Biliary Tract",
+                                  "Any (MSI-H)", "Any (TMB-H)", "Mesothelioma",
+                                  "Primary Mediastinal B-Cell Lymphoma"]],
+
+  // Nivolumab — additional FDA indications
+  ["NIVOLUMAB",                 ["Esophageal", "Mesothelioma", "Any (MSI-H)",
+                                  "Primary Mediastinal B-Cell Lymphoma"]],
+
+  // Ipilimumab — additional
+  ["IPILIMUMAB",                ["Esophageal", "Mesothelioma"]],
+
+  // Cemiplimab — additional
+  ["CEMIPLIMAB",                ["Esophageal", "Endometrial (MSI-H)"]],
+
+  // Atezolizumab — additional
+  ["ATEZOLIZUMAB",              ["Endometrial"]],
+
+  // Bevacizumab — additional
+  ["BEVACIZUMAB",               ["Endometrial", "Fallopian Tube", "Peritoneal"]],
+
+  // Olaparib — BRCA pancreatic
+  ["OLAPARIB",                  ["Pancreatic (BRCA+)"]],
+
+  // Gemcitabine — additional
+  ["GEMCITABINE",               ["Ovarian", "Cholangiocarcinoma", "NHL", "Fallopian Tube"]],
+
+  // Paclitaxel — additional
+  ["PACLITAXEL",                ["Cervical", "Esophageal", "Head & Neck", "Anal", "Fallopian Tube", "Peritoneal"]],
+
+  // Carboplatin — additional
+  ["CARBOPLATIN",               ["Endometrial", "Cervical", "Bladder", "Testicular", "Esophageal",
+                                  "Fallopian Tube", "Peritoneal"]],
+
+  // Cisplatin — additional
+  ["CISPLATIN",                 ["Testicular", "Cervical", "Anal", "Esophageal", "Mesothelioma"]],
+
+  // Capecitabine — additional
+  ["CAPECITABINE",              ["Pancreatic", "HCC", "Esophageal", "Ovarian"]],
+
+  // Docetaxel — additional
+  ["DOCETAXEL",                 ["Head & Neck", "Esophageal", "Bladder", "Ovarian"]],
+
+  // Rituximab — additional lymphoma subtypes
+  ["RITUXIMAB",                 ["DLBCL", "Follicular Lymphoma", "Marginal Zone Lymphoma",
+                                  "Waldenström Macroglobulinemia", "Burkitt Lymphoma"]],
+
+  // Cyclophosphamide — additional
+  ["CYCLOPHOSPHAMIDE",          ["ALL", "AML", "Sarcoma", "Endometrial", "Cervical"]],
+
+  // Doxorubicin — additional
+  ["DOXORUBICIN",               ["Gastric", "Ovarian", "Multiple Myeloma", "Endometrial",
+                                  "Hodgkin Lymphoma", "Thyroid"]],
+
+  // Methotrexate — additional
+  ["METHOTREXATE",              ["Osteosarcoma", "Gestational Trophoblastic Disease", "Mesothelioma"]],
+
+  // Imatinib — additional
+  ["IMATINIB",                  ["Dermatofibrosarcoma Protuberans", "MDS/MPD (PDGFR)"]],
+
+  // NAB-Paclitaxel — additional
+  ["NAB-PACLITAXEL",            ["Ovarian", "Gastric", "Cervical", "Head & Neck"]],
+
+  // Trastuzumab Deruxtecan — additional (HER2-low breast, gastric, HER2+ lung and CRC)
+  ["TRASTUZUMAB DERUXTECAN",    ["Gastric (HER2+)", "Colorectal (HER2+)"]],
+
+  // Brentuximab Vedotin — CD30+ CTCL
+  ["BRENTUXIMAB VEDOTIN",       ["Cutaneous T-Cell Lymphoma (CD30+)", "PTCL"]],
+
+  // Sacituzumab govitecan — additional
+  ["SACITUZUMAB GOVITECAN",     ["Endometrial"]],
+
+  // Lenvatinib + pembrolizumab combo indications
+  ["LENVATINIB",                ["Biliary Tract", "Esophageal"]],
+
+  // Temozolomide — also used in melanoma
+  ["TEMOZOLOMIDE",              ["Melanoma", "PNET"]],
+
+  // ── New drugs not previously in the map ──────────────────────────────────
+
+  // Fluoropyrimidines
+  ["FLUOROURACIL",              ["Colorectal", "Gastric", "Breast", "Head & Neck",
+                                  "Esophageal", "Cervical", "Anal", "Pancreatic"]],
+  ["5-FLUOROURACIL",            ["Colorectal", "Gastric", "Breast", "Head & Neck",
+                                  "Esophageal", "Cervical", "Anal", "Pancreatic"]],
+
+  // Antifolates
+  ["PEMETREXED",                ["Lung (NSCLC non-sq)", "Mesothelioma"]],
+  ["PRALATREXATE",              ["T-Cell Lymphoma"]],
+
+  // Vinca alkaloids
+  ["VINORELBINE",               ["Lung", "Breast"]],
+  ["VINBLASTINE",               ["Hodgkin Lymphoma", "Testicular", "NHL", "Bladder"]],
+
+  // Topoisomerase inhibitors
+  ["TOPOTECAN",                 ["Ovarian", "Lung (SCLC)", "Cervical"]],
+  ["ETOPOSIDE",                 ["Lung (SCLC)", "Lymphoma", "AML", "Testicular",
+                                  "Gastric", "Brain (GBM)"]],
+  ["IRINOTECAN",                ["Cervical", "Pancreatic", "Esophageal"]],  // merges with CRC/gastric
+
+  // Alkylating agents
+  ["IFOSFAMIDE",                ["Sarcoma", "Lymphoma", "Testicular", "Bladder", "Lung (SCLC)"]],
+  ["MELPHALAN",                 ["Multiple Myeloma", "Ovarian"]],
+  ["BUSULFAN",                  ["AML", "CML"]],
+  ["DACARBAZINE",               ["Melanoma", "Hodgkin Lymphoma", "Sarcoma"]],
+  ["TEMOZOLOMIDE",              ["Brain (GBM)", "Brain (Glioma)"]],  // ensure base entry exists
+  ["STREPTOZOCIN",              ["PNET", "Pancreatic"]],
+  ["CARMUSTINE",                ["Brain (GBM)", "Brain (Glioma)", "Multiple Myeloma", "Hodgkin Lymphoma"]],
+  ["LOMUSTINE",                 ["Brain (GBM)", "Brain (Glioma)", "Hodgkin Lymphoma"]],  // merges with above
+
+  // Antitumor antibiotics
+  ["BLEOMYCIN",                 ["Testicular", "Hodgkin Lymphoma", "Head & Neck", "Cervical", "NHL"]],
+  ["MITOMYCIN",                 ["Anal", "Bladder", "Colorectal", "Gastric", "Pancreatic", "Esophageal"]],
+  ["MITOMYCIN C",               ["Anal", "Bladder", "Colorectal", "Gastric", "Pancreatic"]],
+
+  // Liposomal formulations
+  ["LIPOSOMAL DOXORUBICIN",     ["Ovarian", "Multiple Myeloma", "Kaposi Sarcoma", "Breast"]],
+  ["PEGYLATED LIPOSOMAL DOXORUBICIN", ["Ovarian", "Multiple Myeloma", "Kaposi Sarcoma"]],
+  ["DOXORUBICIN LIPOSOMAL",     ["Ovarian", "Multiple Myeloma", "Kaposi Sarcoma"]],
+
+  // mTOR inhibitors
+  ["TEMSIROLIMUS",              ["RCC", "Mantle Cell Lymphoma"]],
+
+  // APL targeted
+  ["TRETINOIN",                 ["AML (APL)"]],
+  ["ARSENIC TRIOXIDE",          ["AML (APL)"]],
+
+  // GIST / Sarcoma
+  ["AVAPRITINIB",               ["GIST (PDGFRA D842V)", "Systemic Mastocytosis"]],
+  ["RIPRETINIB",                ["GIST"]],
+
+  // Hematologic — rare subtypes
+  ["NELARABINE",                ["T-Cell ALL", "T-Cell Lymphoma"]],
+  ["CLOFARABINE",               ["ALL"]],
+  ["CALASPARGASE PEGOL",        ["ALL"]],
+  ["PEGASPARGASE",              ["ALL", "Lymphoma"]],
+
+  // CML / polycythemia
+  ["HYDROXYUREA",               ["CML", "MDS", "Polycythemia Vera", "Essential Thrombocythemia"]],
+
+  // Cutaneous T-cell lymphoma
+  ["VORINOSTAT",                ["Cutaneous T-Cell Lymphoma"]],
+  ["ROMIDEPSIN",                ["Cutaneous T-Cell Lymphoma", "PTCL"]],
+  ["BELINOSTAT",                ["PTCL"]],
+  ["BEXAROTENE",                ["Cutaneous T-Cell Lymphoma"]],
+  ["MOGAMULIZUMAB",             ["Cutaneous T-Cell Lymphoma", "Sézary Syndrome"]],
+  ["DENILEUKIN DIFTITOX",       ["Cutaneous T-Cell Lymphoma"]],
+
+  // PTCL / NK-cell
+  ["PRALATREXATE",              ["PTCL"]],
+  ["BRENTUXIMAB VEDOTIN",       ["PTCL"]],  // merges with above
+
+  // Testicular / GCT
+  ["CISPLATIN",                 ["Testicular"]],  // merges with above
+  ["ETOPOSIDE",                 ["Testicular"]],  // merges with above
+
+  // Anti-androgen — additional
+  ["LEUPROLIDE",                ["Prostate", "Breast (HR+)", "Endometrial"]],
+  ["GOSERELIN",                 ["Prostate", "Breast (HR+)"]],
+  ["DEGARELIX",                 ["Prostate"]],
+  ["RELUGOLIX",                 ["Prostate"]],
+
+  // Radionuclide therapy
+  ["IOBENGUANE I 131",          ["Pheochromocytoma", "Paraganglioma"]],
+  ["LUTETIUM LU 177 DOTATATE",  ["PNET", "Neuroendocrine Tumor"]],
+
+  // Testicular — bleomycin already there
+  // Bisphosphonates / bone (informational)
+  ["ZOLEDRONIC ACID",           ["Multiple Myeloma", "Bone Metastases"]],
+  ["DENOSUMAB",                 ["Multiple Myeloma", "Bone Metastases", "GIST"]],
 ];
 
 // Build map, merging duplicate drug entries
