@@ -51,6 +51,125 @@ function CompanionBadge({ required, testType }: { required: boolean; testType: s
   );
 }
 
+// ─── Drug Prescription Trend Components ──────────────────────────────────────
+
+/** SVG bar chart showing claims per year. Each bar = one calendar year. */
+function ClaimsSparkline({ records }: { records: OncologyPrescriberRecord[] }) {
+  const CHART_W = 140, BAR_AREA_H = 44, LABEL_H = 13;
+  const n = records.length;
+  if (n === 0) return null;
+
+  const maxClaims = Math.max(...records.map(r => r.total_claim_count ?? 0), 1);
+  const barW = Math.min(26, Math.floor((CHART_W - (n - 1) * 3) / n));
+  const step = n > 1 ? (CHART_W - barW) / (n - 1) : 0;
+
+  return (
+    <svg
+      width={CHART_W}
+      height={BAR_AREA_H + LABEL_H}
+      style={{ overflow: "visible", display: "block" }}
+      aria-hidden="true"
+    >
+      {records.map((r, i) => {
+        const claims = r.total_claim_count ?? 0;
+        const barH = Math.max(3, Math.round((claims / maxClaims) * BAR_AREA_H));
+        const x = Math.round(i * step);
+        const y = BAR_AREA_H - barH;
+        const isLatest = i === n - 1;
+        return (
+          <g key={r.year}>
+            <title>{r.year}: {claims.toLocaleString()} claims</title>
+            <rect
+              x={x} y={y} width={barW} height={barH}
+              fill={isLatest ? "#3b82f6" : "#93c5fd"}
+              rx={2}
+            />
+            <text
+              x={x + barW / 2}
+              y={BAR_AREA_H + LABEL_H - 1}
+              textAnchor="middle"
+              fontSize="9"
+              fill="#94a3b8"
+            >
+              '{String(r.year).slice(2)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/**
+ * Groups an array of OncologyPrescriberRecord by drug name,
+ * then renders each drug as a row with a year-over-year trend chart.
+ */
+function DrugTrendList({ records, showCompanion = false }: {
+  records: OncologyPrescriberRecord[];
+  showCompanion?: boolean;
+}) {
+  // Group by drug name (case-insensitive key, preserve original display name)
+  const grouped = new Map<string, OncologyPrescriberRecord[]>();
+  for (const rx of records) {
+    const key = (rx.drug_name ?? "Unknown").toUpperCase();
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(rx);
+  }
+  // Sort each group chronologically (oldest first for left-to-right chart)
+  for (const recs of grouped.values()) recs.sort((a, b) => a.year - b.year);
+  // Sort drugs by total claims descending
+  const sorted = [...grouped.entries()].sort((a, b) => {
+    const sumA = a[1].reduce((s, r) => s + (r.total_claim_count ?? 0), 0);
+    const sumB = b[1].reduce((s, r) => s + (r.total_claim_count ?? 0), 0);
+    return sumB - sumA;
+  });
+
+  if (sorted.length === 0) return null;
+
+  return (
+    <div className="drug-trend-list">
+      {sorted.map(([, recs]) => {
+        const displayName = recs[0].drug_name ?? "Unknown";
+        const totalClaims = recs.reduce((s, r) => s + (r.total_claim_count ?? 0), 0);
+        const totalCost = recs.reduce((s, r) => s + (r.total_drug_cost ?? 0), 0);
+        const latestYear = recs[recs.length - 1].year;
+        const earliestYear = recs[0].year;
+        const yearSpan = latestYear === earliestYear
+          ? String(latestYear)
+          : `${earliestYear}–${latestYear}`;
+        const companionNeeded = recs.some(r => r.requires_companion_dx);
+        const testType = recs.find(r => r.companion_test_type)?.companion_test_type ?? null;
+        return (
+          <div key={displayName} className="drug-trend-row">
+            <div className="drug-trend-name">
+              <span className="drug-trend-drug-name">{displayName}</span>
+              {showCompanion && <CompanionBadge required={companionNeeded} testType={testType} />}
+              <span className="drug-trend-year-span">{yearSpan}</span>
+            </div>
+            <div className="drug-trend-chart">
+              <ClaimsSparkline records={recs} />
+            </div>
+            <div className="drug-trend-stats">
+              <div className="drug-trend-stat">
+                <span className="drug-trend-stat-val">{totalClaims.toLocaleString()}</span>
+                <span className="drug-trend-stat-lbl">claims</span>
+              </div>
+              <div className="drug-trend-stat">
+                <span className="drug-trend-stat-val">{fmtUsd(totalCost)}</span>
+                <span className="drug-trend-stat-lbl">cost</span>
+              </div>
+              <div className="drug-trend-stat">
+                <span className="drug-trend-stat-val">{recs.length}</span>
+                <span className="drug-trend-stat-lbl">yr{recs.length > 1 ? "s" : ""}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MiniBar({ value, max, color = "var(--ol-teal-500)" }: { value: number; max: number; color?: string }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
@@ -770,29 +889,11 @@ function CrossRefDrawer({ npi, onClose }: { npi: string; onClose: () => void }) 
 
             {data.prescriptions.length > 0 && (
               <div className="crossref-section">
-                <h4>Medicare Part D — Oncology Drug Claims</h4>
-                <table className="analyzer-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>Drug</th>
-                      <th>Companion Dx</th>
-                      <th>Year</th>
-                      <th>Claims</th>
-                      <th>Drug Cost</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.prescriptions.map((rx) => (
-                      <tr key={rx.id}>
-                        <td><strong>{rx.drug_name}</strong></td>
-                        <td><CompanionBadge required={rx.requires_companion_dx} testType={rx.companion_test_type} /></td>
-                        <td>{rx.year}</td>
-                        <td className="num">{fmt(rx.total_claim_count)}</td>
-                        <td className="num">{fmtUsd(rx.total_drug_cost)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <h4>
+                  Medicare Part D — Oncology Drug Claims
+                  <span className="crossref-note"> — year-over-year trend · darker bar = most recent year</span>
+                </h4>
+                <DrugTrendList records={data.prescriptions} showCompanion />
               </div>
             )}
 
@@ -1521,20 +1622,11 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
                     </div>
                     {network.focalProvider.prescriptionHistory.length > 0 && (
                       <>
-                        <div className="collab-detail-label" style={{ marginTop: "12px" }}>Full Prescription History</div>
-                        <table className="analyzer-table compact-table">
-                          <thead><tr><th>Drug</th><th>Year</th><th>Claims</th><th>Cost</th></tr></thead>
-                          <tbody>
-                            {network.focalProvider.prescriptionHistory.map((rx, i) => (
-                              <tr key={i}>
-                                <td>{rx.drug_name}</td>
-                                <td>{rx.year}</td>
-                                <td className="num">{fmt(rx.total_claim_count)}</td>
-                                <td className="num">{fmtUsd(rx.total_drug_cost)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                        <div className="collab-detail-label" style={{ marginTop: "12px" }}>
+                          Prescription Trends
+                          <span style={{ fontWeight: 400, textTransform: "none", marginLeft: 6, color: "#94a3b8", fontSize: "0.72rem" }}>darker bar = most recent year</span>
+                        </div>
+                        <DrugTrendList records={network.focalProvider.prescriptionHistory} showCompanion />
                       </>
                     )}
                   </div>

@@ -1754,7 +1754,104 @@ button:disabled {
   letter-spacing: 0.04em;
 }
 
+.crossref-note {
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #94a3b8;
+}
 
+/* ─── Drug Prescription Trend List ────────────────────────────────────────── */
+
+.drug-trend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.drug-trend-row {
+  display: grid;
+  grid-template-columns: 1fr 160px 160px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  min-height: 64px;
+}
+
+.drug-trend-row:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.drug-trend-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.drug-trend-drug-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drug-trend-year-span {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-family: monospace;
+}
+
+.drug-trend-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding-bottom: 2px;
+}
+
+.drug-trend-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+}
+
+.drug-trend-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.drug-trend-stat-val {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #1e293b;
+  font-variant-numeric: tabular-nums;
+}
+
+.drug-trend-stat-lbl {
+  font-size: 0.7rem;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Compact variant inside collab detail panel (narrower sidebar) */
+.collab-detail-body .drug-trend-row {
+  grid-template-columns: 1fr 100px 120px;
+  gap: 8px;
+}
+
+.collab-detail-body .drug-trend-chart svg {
+  width: 100px;
+}
 
 
 

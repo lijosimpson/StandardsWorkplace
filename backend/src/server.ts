@@ -3214,7 +3214,7 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
   const [focalRxResult, focalPaymentsResult, focalGroupResult, focalProfileResult] = await Promise.all([
     supabaseAdmin.from("oncology_drug_prescribers").select("*").eq("npi", npi).order("year", { ascending: false }),
     supabaseAdmin.from("open_payments_oncology").select("*").eq("physician_npi", npi).order("total_amount_usd", { ascending: false }),
-    supabaseAdmin.from("physician_group_affiliations").select("group_pac_id, group_name, specialty").eq("npi", npi).limit(1),
+    supabaseAdmin.from("physician_group_affiliations").select("group_pac_id, group_name, specialty, provider_city, provider_state, provider_zip").eq("npi", npi).limit(20),
     supabaseAdmin.from("oncology_provider_profiles").select("year, hcpcs_codes").eq("npi", npi).order("year", { ascending: true })
   ]);
 
@@ -3328,7 +3328,35 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
   const effectiveState = focal_state || focalState;
   const effectiveZip = focal_zip || focalZip;
 
-  const focalGroupPacId = focalGroupResult.data?.[0]?.group_pac_id ?? null;
+  // Collect ALL group memberships and ALL practice locations for the focal provider
+  const focalGroupRows = (focalGroupResult.data || []) as Array<Record<string, any>>;
+  const focalGroupPacIds = new Set<string>(
+    focalGroupRows.map((r: any) => r.group_pac_id).filter(Boolean)
+  );
+  // Back-compat: single PAC ID used by DAC fallback path below
+  const focalGroupPacId = focalGroupRows[0]?.group_pac_id ?? null;
+
+  // Build deduplicated location list: start from Part D address, add all DAC addresses
+  type FocalLocation = { city: string; state: string; zip: string; zipPrefix: string | null };
+  const _locSeen = new Set<string>();
+  const focalLocations: FocalLocation[] = [];
+  const _addLoc = (city: string, state: string, zip: string) => {
+    const c = (city || "").trim();
+    const s = (state || "").trim();
+    const z = (zip || "").trim();
+    if (!c && !z) return;
+    const key = `${c.toLowerCase()}|${s}|${z}`;
+    if (_locSeen.has(key)) return;
+    _locSeen.add(key);
+    focalLocations.push({ city: c, state: s, zip: z, zipPrefix: z ? z.slice(0, 3) : null });
+  };
+  // Primary address from Part D record
+  _addLoc(effectiveCity, effectiveState, effectiveZip);
+  // Additional addresses from DAC / physician_group_affiliations
+  for (const row of focalGroupRows) {
+    _addLoc(row.provider_city || "", row.provider_state || effectiveState, row.provider_zip || "");
+  }
+
   const focalProfiles = (focalProfileResult.data || []) as Array<{ year: number; hcpcs_codes: string[] }>;
   // Use most recent year's HCPCS for overlap queries; keep all years for cancer inference
   const focalHcpcs: string[] = focalProfiles.length > 0
@@ -3354,11 +3382,11 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
     .order("total_claim_count", { ascending: false });
   if (focalDrugs.length > 0) peersQuery = peersQuery.in("drug_name", focalDrugs.slice(0, 20));
 
-  // 2b. Same-group peers (exact group PAC ID match)
-  const groupQuery = focalGroupPacId
+  // 2b. Same-group peers — all groups the focal provider belongs to
+  const groupQuery = focalGroupPacIds.size > 0
     ? supabaseAdmin.from("physician_group_affiliations")
         .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id, group_name")
-        .eq("group_pac_id", focalGroupPacId).neq("npi", npi).limit(200)
+        .in("group_pac_id", [...focalGroupPacIds]).neq("npi", npi).limit(400)
     : Promise.resolve({ data: [] as any[] });
 
   // 2c. HCPCS-overlap peers
@@ -3367,25 +3395,29 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
         .select("npi, hcpcs_codes").overlaps("hcpcs_codes", focalHcpcs).neq("npi", npi).limit(500)
     : Promise.resolve({ data: [] as any[] });
 
-  // 2d. Cross-specialty geographic peers — same city, plus ZIP-prefix (metro area) fallback
-  //     Captures radiation oncologists, surgical oncologists, gynecologic oncologists,
-  //     pathologists and radiologists in surrounding suburbs.
-  const zipPrefix = effectiveZip ? effectiveZip.slice(0, 3) : null;
-  const geoQuery = effectiveCity && effectiveState
-    ? supabaseAdmin.from("physician_group_affiliations")
+  // 2d. Cross-specialty geographic peers — one city query + one ZIP-prefix query per practice location.
+  //     Covers providers working at satellite clinics or multiple campuses in different cities/ZIPs.
+  //     Capped at 5 locations to avoid fan-out; most providers have 1-2.
+  const GEO_LOC_LIMIT = 5;
+  const locSlice = focalLocations.slice(0, GEO_LOC_LIMIT);
+  const sb = supabaseAdmin!;
+  const geoCityQueries = locSlice
+    .filter(loc => loc.city && loc.state)
+    .map(loc =>
+      sb.from("physician_group_affiliations")
         .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
-        .ilike("provider_city", effectiveCity).eq("provider_state", effectiveState).neq("npi", npi).limit(500)
-    : Promise.resolve({ data: [] as any[] });
-
-  // Secondary: ZIP prefix search covers the broader metro area (same 3-digit ZIP sectional center)
-  const geoZipQuery = zipPrefix && effectiveState
-    ? supabaseAdmin.from("physician_group_affiliations")
+        .ilike("provider_city", loc.city).eq("provider_state", loc.state).neq("npi", npi).limit(400)
+    );
+  const geoZipQueries = locSlice
+    .filter(loc => loc.zipPrefix && loc.state)
+    .map(loc =>
+      sb.from("physician_group_affiliations")
         .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
-        .like("provider_zip", `${zipPrefix}%`).eq("provider_state", effectiveState).neq("npi", npi).limit(500)
-    : Promise.resolve({ data: [] as any[] });
+        .like("provider_zip", `${loc.zipPrefix}%`).eq("provider_state", loc.state).neq("npi", npi).limit(400)
+    );
 
-  const [peersResult, groupResult, hcpcsResult, geoResult, geoZipResult] = await Promise.all([
-    peersQuery.limit(2000), groupQuery, hcpcsQuery, geoQuery, geoZipQuery
+  const [peersResult, groupResult, hcpcsResult, ...geoResults] = await Promise.all([
+    peersQuery.limit(2000), groupQuery, hcpcsQuery, ...geoCityQueries, ...geoZipQueries
   ]);
 
   // 3. Aggregate all peers into a unified map
@@ -3441,13 +3473,15 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
     byNpi.get(row.npi)!.hcpcsCodes = row.hcpcs_codes || [];
   }
 
-  for (const row of [...(geoResult.data || []), ...(geoZipResult.data || [])] as Array<Record<string, any>>) {
+  const allGeoRows = (geoResults as Array<{ data: any[] | null }>)
+    .flatMap(r => r.data || []) as Array<Record<string, any>>;
+  for (const row of allGeoRows) {
     upsertPeer(row.npi, {
       npi: row.npi, name: row.provider_name || "",
       city: row.provider_city || "", state: row.provider_state || "",
       zip: row.provider_zip || "", specialty: row.specialty || "",
       isGeoPeer: true,
-      isSameGroup: !!(focalGroupPacId && row.group_pac_id === focalGroupPacId),
+      isSameGroup: !!(row.group_pac_id && focalGroupPacIds.has(row.group_pac_id)),
     });
   }
 
@@ -3461,11 +3495,19 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
       const specialtyType = classifySpecialtyType(p.specialty, p.hcpcsCodes);
       const affinity = SPECIALTY_AFFINITY[specialtyType] ?? 0.4;
 
-      const geoWeight = p.isSameGroup ? 1.0
-        : (p.zip && p.zip === effectiveZip) ? 0.8
-        : (p.city && p.city.toLowerCase() === effectiveCity.toLowerCase()) ? 0.5
-        : (p.state === effectiveState) ? 0.2
-        : 0.05;
+      // Best geo match across ALL focal practice locations (handles multi-site providers)
+      let geoWeight = 0.05;
+      if (p.isSameGroup) {
+        geoWeight = 1.0;
+      } else {
+        for (const loc of focalLocations) {
+          const w = (p.zip && p.zip === loc.zip) ? 0.8
+            : (p.city && loc.city && p.city.toLowerCase() === loc.city.toLowerCase() && p.state === loc.state) ? 0.5
+            : (p.state === loc.state) ? 0.2
+            : 0.05;
+          if (w > geoWeight) geoWeight = w;
+        }
+      }
 
       const drugInt = [...p.sharedDrugs].filter(d => focalDrugSet.has(d)).length;
       const drugUnion = new Set([...p.sharedDrugs, ...focalDrugSet]).size;
