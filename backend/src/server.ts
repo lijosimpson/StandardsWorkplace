@@ -3222,17 +3222,25 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
         .select("npi, hcpcs_codes").overlaps("hcpcs_codes", focalHcpcs).neq("npi", npi).limit(500)
     : Promise.resolve({ data: [] as any[] });
 
-  // 2d. Cross-specialty geographic peers — all oncology-related providers in same city
-  //     Captures radiation oncologists, surgical oncologists, gynecologic oncologists.
-  //     After re-running processDac with broader keywords, also captures pathologists & radiologists.
+  // 2d. Cross-specialty geographic peers — same city, plus ZIP-prefix (metro area) fallback
+  //     Captures radiation oncologists, surgical oncologists, gynecologic oncologists,
+  //     pathologists and radiologists in surrounding suburbs.
+  const zipPrefix = effectiveZip ? effectiveZip.slice(0, 3) : null;
   const geoQuery = effectiveCity && effectiveState
     ? supabaseAdmin.from("physician_group_affiliations")
         .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
         .ilike("provider_city", effectiveCity).eq("provider_state", effectiveState).neq("npi", npi).limit(500)
     : Promise.resolve({ data: [] as any[] });
 
-  const [peersResult, groupResult, hcpcsResult, geoResult] = await Promise.all([
-    peersQuery.limit(2000), groupQuery, hcpcsQuery, geoQuery
+  // Secondary: ZIP prefix search covers the broader metro area (same 3-digit ZIP sectional center)
+  const geoZipQuery = zipPrefix && effectiveState
+    ? supabaseAdmin.from("physician_group_affiliations")
+        .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
+        .like("provider_zip", `${zipPrefix}%`).eq("provider_state", effectiveState).neq("npi", npi).limit(500)
+    : Promise.resolve({ data: [] as any[] });
+
+  const [peersResult, groupResult, hcpcsResult, geoResult, geoZipResult] = await Promise.all([
+    peersQuery.limit(2000), groupQuery, hcpcsQuery, geoQuery, geoZipQuery
   ]);
 
   // 3. Aggregate all peers into a unified map
@@ -3288,7 +3296,7 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
     byNpi.get(row.npi)!.hcpcsCodes = row.hcpcs_codes || [];
   }
 
-  for (const row of (geoResult.data || []) as Array<Record<string, any>>) {
+  for (const row of [...(geoResult.data || []), ...(geoZipResult.data || [])] as Array<Record<string, any>>) {
     upsertPeer(row.npi, {
       npi: row.npi, name: row.provider_name || "",
       city: row.provider_city || "", state: row.provider_state || "",

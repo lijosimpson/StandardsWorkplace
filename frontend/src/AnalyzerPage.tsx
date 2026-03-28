@@ -1554,7 +1554,7 @@ function HospitalNetworkTab({ year, state }: { year: string; state: string }) {
             <div className="collab-legend-row"><strong>Prescribing Data</strong> — Crossreferenced with Medicare Part D to show top oncology drugs and companion diagnostic requirements</div>
           </div>
           <div className="analyzer-callout" style={{ marginTop: "16px" }}>
-            <strong>Data required:</strong> Run <code>npm run download:hospital</code> then <code>npm run process:hospital</code> then <code>npm run upload -- --hospital</code> in the <code>etl/</code> folder to load hospital data.
+            Search for a hospital by name above to begin. You can filter by state using the State selector.
           </div>
         </div>
       )}
