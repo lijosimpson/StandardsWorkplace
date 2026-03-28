@@ -896,7 +896,7 @@ const SPECIALTY_TYPE_META: Record<string, { color: string; label: string; icon: 
   radiology:  { color: "#06b6d4", label: "Radiology",           icon: "🩻" },
   other:      { color: "#94a3b8", label: "Other",               icon: "👤" },
 };
-const CARE_TEAM_TYPES = ["oncology", "hematology", "radiation", "surgery", "pathology", "radiology"] as const;
+const CARE_TEAM_TYPES = ["oncology", "hematology", "radiation", "surgery", "pathology", "radiology", "other"] as const;
 
 function specialtyTypeColor(specialtyType?: string): string {
   return SPECIALTY_TYPE_META[specialtyType || "other"]?.color ?? "#94a3b8";
@@ -1034,18 +1034,82 @@ function CollaborationGraph({ network, onNodeClick }: {
 }
 
 // Care Team view — groups collaborators by specialty type in pods
-function CareTeamView({ network, onNodeClick }: { network: CollaborationNetwork; onNodeClick: (n: CollaboratorNode) => void }) {
-  const bySpecialty = Object.fromEntries(
-    CARE_TEAM_TYPES.map(t => [t, network.collaborators.filter(c => c.specialtyType === t).slice(0, 8)])
+const POD_INITIAL_LIMIT = 8;
+
+function CareTeamPod({ t, members, onNodeClick }: {
+  t: string;
+  members: CollaboratorNode[];
+  onNodeClick: (n: CollaboratorNode) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const meta = SPECIALTY_TYPE_META[t];
+  const visible = expanded ? members : members.slice(0, POD_INITIAL_LIMIT);
+  const hasMore = members.length > POD_INITIAL_LIMIT;
+
+  return (
+    <div className="care-team-pod" style={{ borderTopColor: meta.color }}>
+      <div className="pod-header">
+        <span className="pod-icon">{meta.icon}</span>
+        <span className="pod-label" style={{ color: meta.color }}>{meta.label}</span>
+        {members.length > 0 && <span className="pod-count">{members.length}</span>}
+      </div>
+      {members.length === 0 ? (
+        <div className="pod-empty">No {meta.label.toLowerCase()} found in area</div>
+      ) : (
+        <>
+          {visible.map(c => (
+            <div key={c.npi} className="pod-member" onClick={() => onNodeClick(c)}>
+              <div className="pod-member-name">{c.name}</div>
+              <div className="pod-member-meta">{c.city}, {c.state}</div>
+              <CancerTypeBadges cancerTypes={c.cancerTypes} compact />
+              <div className="pod-member-footer">
+                <span className={`collab-badge collab-${c.collaborationType === "same_group" ? "strong" : scoreLabel(c.collaborationScore).toLowerCase()}`}>
+                  {c.collaborationType === "same_group" ? "Same Group" : `${Math.round(c.collaborationScore * 100)}%`}
+                </span>
+                <span className="pod-conn-type">{c.collaborationType === "cross_specialty" ? "Geo" : c.collaborationType === "same_group" ? "" : "Rx/HCPCS"}</span>
+              </div>
+            </div>
+          ))}
+          {hasMore && (
+            <button
+              type="button"
+              className="pod-show-more"
+              onClick={() => setExpanded(e => !e)}
+              style={{ width: "100%", padding: "6px", fontSize: "11px", cursor: "pointer",
+                background: "transparent", border: "1px solid #334155", borderRadius: "4px",
+                color: "#94a3b8", marginTop: "4px" }}
+            >
+              {expanded ? "Show less" : `Show ${members.length - POD_INITIAL_LIMIT} more`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
   );
-  const coveredCount = CARE_TEAM_TYPES.filter(t => bySpecialty[t].length > 0).length;
+}
+
+function CareTeamView({ network, onNodeClick }: { network: CollaborationNetwork; onNodeClick: (n: CollaboratorNode) => void }) {
+  // Bucket all collaborators by specialtyType; anything unclassified → "other"
+  const bySpecialty = Object.fromEntries(
+    CARE_TEAM_TYPES.map(t => [
+      t,
+      t === "other"
+        ? network.collaborators.filter(c => !CARE_TEAM_TYPES.slice(0, -1).includes(c.specialtyType as any))
+        : network.collaborators.filter(c => c.specialtyType === t)
+    ])
+  ) as Record<string, CollaboratorNode[]>;
+
+  // Coverage excludes "other" from specialty completeness score
+  const CLINICAL_TYPES = CARE_TEAM_TYPES.filter(t => t !== "other");
+  const coveredCount = CLINICAL_TYPES.filter(t => bySpecialty[t].length > 0).length;
+  const totalShown = Object.values(bySpecialty).reduce((s, arr) => s + arr.length, 0);
 
   return (
     <div className="care-team-view">
       <div className="care-team-completeness">
         <span className="care-team-coverage-label">Care Team Coverage</span>
         <div className="care-team-coverage-badges">
-          {CARE_TEAM_TYPES.map(t => {
+          {CLINICAL_TYPES.map(t => {
             const meta = SPECIALTY_TYPE_META[t];
             const has = bySpecialty[t].length > 0;
             return (
@@ -1056,40 +1120,13 @@ function CareTeamView({ network, onNodeClick }: { network: CollaborationNetwork;
             );
           })}
         </div>
-        <span className="care-team-score">{coveredCount}/{CARE_TEAM_TYPES.length} specialties</span>
+        <span className="care-team-score">{coveredCount}/{CLINICAL_TYPES.length} specialties · {totalShown} total</span>
       </div>
 
       <div className="care-team-grid">
-        {CARE_TEAM_TYPES.map(t => {
-          const meta = SPECIALTY_TYPE_META[t];
-          const members = bySpecialty[t];
-          return (
-            <div key={t} className="care-team-pod" style={{ borderTopColor: meta.color }}>
-              <div className="pod-header">
-                <span className="pod-icon">{meta.icon}</span>
-                <span className="pod-label" style={{ color: meta.color }}>{meta.label}</span>
-                {members.length > 0 && <span className="pod-count">{members.length}</span>}
-              </div>
-              {members.length === 0 ? (
-                <div className="pod-empty">No {meta.label.toLowerCase()} found in area</div>
-              ) : (
-                members.map(c => (
-                  <div key={c.npi} className="pod-member" onClick={() => onNodeClick(c)}>
-                    <div className="pod-member-name">{c.name}</div>
-                    <div className="pod-member-meta">{c.city}, {c.state}</div>
-                    <CancerTypeBadges cancerTypes={c.cancerTypes} compact />
-                    <div className="pod-member-footer">
-                      <span className={`collab-badge collab-${c.collaborationType === "same_group" ? "strong" : scoreLabel(c.collaborationScore).toLowerCase()}`}>
-                        {c.collaborationType === "same_group" ? "Same Group" : `${Math.round(c.collaborationScore * 100)}%`}
-                      </span>
-                      <span className="pod-conn-type">{c.collaborationType === "cross_specialty" ? "Geo" : c.collaborationType === "same_group" ? "" : "Rx/HCPCS"}</span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          );
-        })}
+        {CARE_TEAM_TYPES.map(t => (
+          <CareTeamPod key={t} t={t} members={bySpecialty[t]} onNodeClick={onNodeClick} />
+        ))}
       </div>
     </div>
   );

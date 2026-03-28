@@ -1,0 +1,54 @@
+{
+  "_comment": "Auto-updated by scripts/checkCmsUpdates.js — tracks last-seen CMS dataset modification dates",
+  "_lastChecked": null,
+  "datasets": {
+    "medicare_partb": {
+      "label": "Medicare Part B — Physician/Other Practitioners by Provider & Service",
+      "lastModified": null,
+      "latestYear": 2023,
+      "knownUrl": "https://data.cms.gov/sites/default/files/2025-04/e3f823f8-db5b-4cc7-ba04-e7ae92b99757/MUP_PHY_R25_P05_V20_D23_Prov_Svc.csv"
+    },
+    "medicare_partd": {
+      "label": "Medicare Part D — Prescribers by Provider and Drug",
+      "lastModified": null,
+      "latestYear": 2023,
+      "knownUrl": "https://data.cms.gov/sites/default/files/2025-04/0d5915ce-002c-4d87-bde8-24ffb08bb6cc/MUP_DPR_RY25_P04_V10_DY23_NPIBN.csv"
+    },
+    "dac": {
+      "label": "Doctors and Clinicians (DAC / PECOS)",
+      "lastModified": null,
+      "latestYear": 2024,
+      "knownUrl": null
+    },
+    "hospital_general": {
+      "label": "Hospital General Information",
+      "lastModified": null,
+      "latestYear": 2024,
+      "knownUrl": null
+    },
+    "facility_affiliations": {
+      "label": "Facility Affiliations",
+      "lastModified": null,
+      "latestYear": 2024,
+      "knownUrl": null
+    },
+    "order_referring": {
+      "label": "Order & Referring — Eligible Professionals",
+      "lastModified": null,
+      "latestYear": 2024,
+      "knownUrl": null
+    },
+    "aco_mssp": {
+      "label": "ACO MSSP — Shared Savings Program ACOs",
+      "lastModified": null,
+      "latestYear": 2023,
+      "knownUrl": null
+    },
+    "open_payments": {
+      "label": "CMS Open Payments — General Payments",
+      "lastModified": null,
+      "latestYear": 2023,
+      "knownUrl": "https://download.cms.gov/openpayments/PGYR2023_P01232026_01102026/OP_DTL_GNRL_PGYR2023_P01232026_01102026.csv"
+    }
+  }
+}

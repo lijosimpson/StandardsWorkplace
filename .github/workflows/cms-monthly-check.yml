@@ -1,0 +1,152 @@
+name: Monthly CMS Data Check
+
+# Runs on the 1st of every month at 9 AM UTC.
+# Creates a GitHub Issue when new or updated CMS datasets are detected,
+# so the ETL pipeline can be re-run to ingest the latest data.
+
+on:
+  schedule:
+    - cron: "0 9 1 * *"   # 9 AM UTC, 1st of every month
+  workflow_dispatch:        # Also allows manual trigger from GitHub Actions UI
+    inputs:
+      force_issue:
+        description: "Create issue even if no updates found (for testing)"
+        type: boolean
+        default: false
+
+jobs:
+  check-cms-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # To commit updated registry
+      issues: write     # To open a GitHub Issue when data is found
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run CMS dataset check
+        id: check
+        # Exit code 1 = updates found, 0 = no updates, 2 = fatal error
+        # We capture both exit code and output
+        run: |
+          node scripts/checkCmsUpdates.js --save --json > /tmp/cms-report.json 2>&1
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Parse report
+        id: parse
+        run: |
+          if [ -f /tmp/cms-report.json ]; then
+            HAS_UPDATES=$(node -e "
+              try {
+                const r = JSON.parse(require('fs').readFileSync('/tmp/cms-report.json','utf8'));
+                console.log(r.hasUpdates ? 'true' : 'false');
+              } catch(e) { console.log('false'); }
+            ")
+            SUMMARY=$(node -e "
+              try {
+                const r = JSON.parse(require('fs').readFileSync('/tmp/cms-report.json','utf8'));
+                const updates = r.results.filter(x => x.isUpdated);
+                const errors  = r.results.filter(x => x.fetchError);
+                console.log(updates.length + ' updated, ' + errors.length + ' fetch errors');
+              } catch(e) { console.log('parse error'); }
+            ")
+            echo "has_updates=$HAS_UPDATES" >> $GITHUB_OUTPUT
+            echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+          else
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            echo "summary=script error" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build issue body
+        id: issue_body
+        if: steps.parse.outputs.has_updates == 'true' || github.event.inputs.force_issue == 'true'
+        run: |
+          node -e "
+            const r = JSON.parse(require('fs').readFileSync('/tmp/cms-report.json','utf8'));
+            const date = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+            const updates = r.results.filter(x => x.isUpdated);
+            const errors  = r.results.filter(x => x.fetchError);
+
+            let body = '## CMS Data Update Detected — ' + date + '\n\n';
+            body += 'The monthly CMS dataset check found **' + updates.length + ' updated dataset(s)**.\n\n';
+
+            if (updates.length > 0) {
+              body += '### Updated Datasets\n\n';
+              for (const u of updates) {
+                body += '#### ' + u.label + '\n';
+                if (u.prevModified !== u.currentModified)
+                  body += '- **Modified**: ' + (u.prevModified || 'unknown') + ' → ' + u.currentModified + '\n';
+                if (u.prevYear !== u.currentYear)
+                  body += '- **New data year**: ' + u.prevYear + ' → **' + u.currentYear + '** ← download needed\n';
+                body += '- **Portal**: ' + u.portalUrl + '\n';
+                body += '- **ETL action**: \`' + u.etlAction + '\`\n\n';
+              }
+            }
+
+            if (errors.length > 0) {
+              body += '### Datasets with fetch errors (check manually)\n\n';
+              for (const e of errors) {
+                body += '- [' + e.label + '](' + e.portalUrl + ') — ' + e.fetchError + '\n';
+              }
+              body += '\n';
+            }
+
+            body += '### ETL Steps to Ingest New Data\n\n';
+            body += '\`\`\`powershell\n';
+            body += '# 1. Update download URLs in etl/downloadData.ts for the new year\n';
+            body += '# 2. Run the ETL pipeline:\n';
+            body += 'cd etl\n';
+            body += 'npm run download          # Download new raw CMS files\n';
+            body += 'npm run process:partb     # Filter Part B NGS/IHC codes\n';
+            body += 'npm run process:partd     # Filter Part D oncology drugs\n';
+            body += 'npm run process:payments  # Filter Open Payments\n';
+            body += 'npm run upload            # Upload to Supabase\n';
+            body += '\`\`\`\n\n';
+            body += '> Registry file \`scripts/cms-registry.json\` has been auto-updated with the latest modification dates.\n';
+
+            require('fs').writeFileSync('/tmp/issue-body.md', body);
+            console.log('Issue body written.');
+          "
+
+      - name: Create GitHub Issue
+        if: steps.parse.outputs.has_updates == 'true' || github.event.inputs.force_issue == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/issue-body.md', 'utf8');
+            const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[CMS Data Update] New Medicare data available — ${date}`,
+              body,
+              labels: ['data-update', 'etl']
+            });
+
+      - name: Commit updated registry
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update CMS data registry [skip ci]"
+          file_pattern: "scripts/cms-registry.json"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
+
+      - name: Summary
+        run: |
+          echo "### CMS Check Result" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.parse.outputs.has_updates }}" == "true" ]; then
+            echo "🆕 **Updates detected**: ${{ steps.parse.outputs.summary }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "A GitHub Issue has been created with the full report and ETL instructions." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ **No updates**: All datasets match the registry." >> $GITHUB_STEP_SUMMARY
+          fi
