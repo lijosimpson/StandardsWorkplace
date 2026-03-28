@@ -791,7 +791,7 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  getPhysicianPartBServices: async (npi: string, year?: string): Promise<{ services: import("./types").PartBServiceRecord[]; available: boolean }> => {
+  getPhysicianPartBServices: async (npi: string, year?: string): Promise<{ services: import("./types").PartBServiceRecord[]; available: boolean; billedByGroup?: boolean; groupPacId?: string }> => {
     const params = new URLSearchParams({ npi });
     if (year) params.set("year", year);
     const res = await fetch(`${API_BASE}/analyzer/physician/partb-services?${params}`);

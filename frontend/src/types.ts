@@ -542,6 +542,7 @@ export interface CollaborationNetwork {
     cancerTypes: CancerTypeYear[];
     prescriptionHistory: OncologyPrescriberRecord[];
     openPayments: OpenPaymentRecord[];
+    limitedProfile?: boolean;
   };
   collaborators: CollaboratorNode[];
   edges: CollaborationEdge[];
@@ -553,6 +554,9 @@ export interface CollaborationProviderSearchResult {
   city: string;
   state: string;
   specialty: string;
+  groupPacId?: string | null;
+  groupName?: string | null;
+  inPrescriberData?: boolean;
 }
 
 // ─── Physician Locations ─────────────────────────────────────────────────────

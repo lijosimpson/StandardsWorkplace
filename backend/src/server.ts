@@ -3089,32 +3089,85 @@ app.get("/api/analyzer/collaboration/search", async (req: Request, res: Response
   const { q, state, year = "2023" } = req.query as Record<string, string>;
   if (!q || q.trim().length < 2) return (res as any).json({ providers: [] });
 
-  let query = supabaseAdmin
-    .from("oncology_drug_prescribers")
-    .select("npi, nppes_provider_first_name, nppes_provider_last_org_name, nppes_provider_city, nppes_provider_state, provider_type")
-    .eq("year", parseInt(year, 10))
-    .limit(200);
-
-  if (state) query = query.eq("nppes_provider_state", state.toUpperCase());
-
-  const terms = q.trim().split(/\s+/).filter(Boolean);
-  for (const term of terms) {
-    query = query.or(`nppes_provider_last_org_name.ilike.%${term}%,nppes_provider_first_name.ilike.%${term}%,npi.eq.${term}`);
-  }
-
-  const { data, error } = await query;
-  if (error) return (res as any).status(500).json({ error: error.message });
+  const term = q.trim();
+  const isDigitsOnly = /^\d+$/.test(term);
+  const isNpi = isDigitsOnly && term.length === 10;
+  // Group PAC IDs are typically 10-13 digits and differ from NPI by not being exactly 10 digits
+  // (or being exactly 10 digits but entered in the "group pac" context)
+  const isGroupPac = isDigitsOnly && term.length !== 10;
 
   const seen = new Set<string>();
-  const providers = (data || [])
-    .filter((r: any) => { if (seen.has(r.npi)) return false; seen.add(r.npi); return true; })
-    .map((r: any) => ({
-      npi: r.npi,
-      name: `${r.nppes_provider_first_name || ""} ${r.nppes_provider_last_org_name || ""}`.trim(),
-      city: r.nppes_provider_city,
-      state: r.nppes_provider_state,
-      specialty: r.provider_type
-    }));
+  const providers: Array<Record<string, any>> = [];
+
+  // --- Search oncology_drug_prescribers (name / individual NPI / state) ---
+  if (!isGroupPac) {
+    let rxQuery = supabaseAdmin
+      .from("oncology_drug_prescribers")
+      .select("npi, nppes_provider_first_name, nppes_provider_last_org_name, nppes_provider_city, nppes_provider_state, provider_type")
+      .eq("year", parseInt(year, 10))
+      .limit(200);
+
+    if (state) rxQuery = rxQuery.eq("nppes_provider_state", state.toUpperCase());
+
+    const terms = term.split(/\s+/).filter(Boolean);
+    for (const t of terms) {
+      rxQuery = rxQuery.or(`nppes_provider_last_org_name.ilike.%${t}%,nppes_provider_first_name.ilike.%${t}%,npi.eq.${t}`);
+    }
+
+    const { data, error } = await rxQuery;
+    if (error) return (res as any).status(500).json({ error: error.message });
+
+    for (const r of (data || []) as any[]) {
+      if (seen.has(r.npi)) continue;
+      seen.add(r.npi);
+      providers.push({
+        npi: r.npi,
+        name: `${r.nppes_provider_first_name || ""} ${r.nppes_provider_last_org_name || ""}`.trim(),
+        city: r.nppes_provider_city,
+        state: r.nppes_provider_state,
+        specialty: r.provider_type,
+        inPrescriberData: true
+      });
+    }
+  }
+
+  // --- Search physician_group_affiliations by NPI, group PAC ID, or name ---
+  {
+    let dacQuery = supabaseAdmin
+      .from("physician_group_affiliations")
+      .select("npi, provider_name, provider_city, provider_state, specialty, group_pac_id, group_name")
+      .limit(isGroupPac ? 200 : 50);
+
+    if (state) dacQuery = dacQuery.eq("provider_state", state.toUpperCase());
+
+    if (isNpi) {
+      dacQuery = dacQuery.eq("npi", term);
+    } else if (isGroupPac) {
+      dacQuery = dacQuery.eq("group_pac_id", term);
+    } else {
+      // Text search by provider name or group name
+      const terms = term.split(/\s+/).filter(Boolean);
+      for (const t of terms) {
+        dacQuery = dacQuery.or(`provider_name.ilike.%${t}%,group_name.ilike.%${t}%`);
+      }
+    }
+
+    const { data: dacData } = await dacQuery;
+    for (const r of (dacData || []) as any[]) {
+      if (seen.has(r.npi)) continue;
+      seen.add(r.npi);
+      providers.push({
+        npi: r.npi,
+        name: r.provider_name || "",
+        city: r.provider_city || "",
+        state: r.provider_state || "",
+        specialty: r.specialty || "",
+        groupPacId: r.group_pac_id || null,
+        groupName: r.group_name || null,
+        inPrescriberData: false
+      });
+    }
+  }
 
   return (res as any).json({ providers });
 });
@@ -3170,7 +3223,99 @@ app.get("/api/analyzer/collaboration/network", async (req: Request, res: Respons
   const allFocalRx = (focalRxResult.data || []) as Array<Record<string, any>>;
   const yearRx = allFocalRx.filter((r) => r.year === parseInt(year, 10));
 
-  if (allFocalRx.length === 0) return (res as any).status(404).json({ error: "Provider not found in oncology prescriber data" });
+  if (allFocalRx.length === 0) {
+    // Fallback: provider not in oncology prescribers — look up in DAC (physician_group_affiliations)
+    const dacFallback = await supabaseAdmin.from("physician_group_affiliations")
+      .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id, group_name")
+      .eq("npi", npi).limit(1);
+
+    if (!dacFallback.data || dacFallback.data.length === 0) {
+      return (res as any).status(404).json({ error: "Provider not found" });
+    }
+
+    const d = dacFallback.data[0] as Record<string, any>;
+    const dacGroupPacId: string | null = d.group_pac_id ?? null;
+    const dacEffectiveCity = focal_city || d.provider_city || "";
+    const dacEffectiveState = focal_state || d.provider_state || "";
+    const dacEffectiveZip = focal_zip || d.provider_zip || "";
+    const dacZipPrefix = dacEffectiveZip ? dacEffectiveZip.slice(0, 3) : null;
+    const dacFocalProfiles = (focalProfileResult.data || []) as Array<{ year: number; hcpcs_codes: string[] }>;
+    const dacFocalHcpcs: string[] = dacFocalProfiles.length > 0 ? dacFocalProfiles[dacFocalProfiles.length - 1].hcpcs_codes ?? [] : [];
+
+    const [dacGroupRes, dacGeoRes, dacGeoZipRes] = await Promise.all([
+      dacGroupPacId
+        ? supabaseAdmin.from("physician_group_affiliations")
+            .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
+            .eq("group_pac_id", dacGroupPacId).neq("npi", npi).limit(200)
+        : Promise.resolve({ data: [] as any[] }),
+      dacEffectiveCity && dacEffectiveState
+        ? supabaseAdmin.from("physician_group_affiliations")
+            .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
+            .ilike("provider_city", dacEffectiveCity).eq("provider_state", dacEffectiveState).neq("npi", npi).limit(500)
+        : Promise.resolve({ data: [] as any[] }),
+      dacZipPrefix && dacEffectiveState
+        ? supabaseAdmin.from("physician_group_affiliations")
+            .select("npi, provider_name, provider_city, provider_state, provider_zip, specialty, group_pac_id")
+            .like("provider_zip", `${dacZipPrefix}%`).eq("provider_state", dacEffectiveState).neq("npi", npi).limit(500)
+        : Promise.resolve({ data: [] as any[] })
+    ]);
+
+    const dacByNpi = new Map<string, any>();
+    for (const row of [...(dacGroupRes.data || []), ...(dacGeoRes.data || []), ...(dacGeoZipRes.data || [])] as any[]) {
+      if (!dacByNpi.has(row.npi)) dacByNpi.set(row.npi, { ...row, isSameGroup: false });
+      if (dacGroupPacId && row.group_pac_id === dacGroupPacId) dacByNpi.get(row.npi)!.isSameGroup = true;
+    }
+
+    const dacFocalSpecialty = (d.specialty as string) || "";
+    const dacFocalSpecialtyType = classifySpecialtyType(dacFocalSpecialty);
+
+    const dacCollaborators = [...dacByNpi.values()]
+      .filter((p) => p.provider_name)
+      .map((p) => {
+        const specialtyType = classifySpecialtyType(p.specialty || "");
+        const affinity = SPECIALTY_AFFINITY[specialtyType] ?? 0.4;
+        const geoWeight = p.isSameGroup ? 1.0
+          : (p.provider_zip && p.provider_zip === dacEffectiveZip) ? 0.8
+          : (p.provider_city && (p.provider_city as string).toLowerCase() === dacEffectiveCity.toLowerCase()) ? 0.5
+          : (p.provider_state === dacEffectiveState) ? 0.2 : 0.05;
+        const score = p.isSameGroup ? 1.0 : geoWeight * affinity;
+        return {
+          npi: p.npi as string, name: p.provider_name as string,
+          city: p.provider_city || "", state: p.provider_state || "",
+          specialty: p.specialty || "", specialtyType,
+          sharedDrugs: [] as string[], totalClaims: 0, beneCnt: 0,
+          drugOverlapScore: 0, hcpcsOverlapScore: 0, sharedBeneProxy: 0,
+          collaborationScore: Math.round(score * 100) / 100,
+          collaborationType: p.isSameGroup ? "same_group" : "cross_specialty",
+          cancerTypes: [] as any[]
+        };
+      })
+      .filter((p) => p.collaborationScore >= 0.05)
+      .sort((a, b) => b.collaborationScore - a.collaborationScore)
+      .slice(0, 60);
+
+    const dacFocalNode = {
+      npi,
+      name: (d.provider_name as string) || npi,
+      city: d.provider_city || "", state: d.provider_state || "",
+      specialty: dacFocalSpecialty, specialtyType: dacFocalSpecialtyType,
+      totalClaims: 0, beneCnt: 0, drugs: [], hcpcsCodes: dacFocalHcpcs,
+      groupPacId: dacGroupPacId, groupName: (d.group_name as string | null) ?? null,
+      cancerTypes: inferCancerTypesWithYears([], dacFocalHcpcs.map(code => ({ code, year: parseInt(year, 10) }))),
+      prescriptionHistory: [], openPayments: focalPaymentsResult.data || [],
+      isFocal: true, limitedProfile: true
+    };
+
+    return (res as any).json({
+      focalProvider: dacFocalNode,
+      collaborators: dacCollaborators,
+      edges: dacCollaborators.map((c) => ({
+        source: npi, target: c.npi, score: c.collaborationScore,
+        sharedDrugs: [], drugOverlapScore: 0, hcpcsOverlapScore: 0,
+        sharedBeneProxy: 0, collaborationType: c.collaborationType
+      }))
+    });
+  }
 
   const focalInfo = allFocalRx[0];
   const focalDrugs = [...new Set(yearRx.map((r) => r.drug_name).filter(Boolean))] as string[];
@@ -3781,8 +3926,45 @@ app.get("/api/analyzer/physician/partb-services", async (req: Request, res: Resp
     const { data, error } = await query.order("total_services", { ascending: false }).limit(200);
 
     if (error) {
-      // Table may not exist yet
       return (res as any).json({ services: [], available: false });
+    }
+
+    // If no individual NPI records, try group billing fallback via org_pac_id
+    if (!data || data.length === 0) {
+      const groupAffilResult = await supabaseAdmin
+        .from("physician_group_affiliations")
+        .select("group_pac_id")
+        .eq("npi", npi)
+        .limit(1);
+
+      const groupPacId = groupAffilResult.data?.[0]?.group_pac_id;
+      if (groupPacId) {
+        // Find peer NPIs in same group that have Part B billing
+        const groupMembersResult = await supabaseAdmin
+          .from("physician_group_affiliations")
+          .select("npi")
+          .eq("group_pac_id", groupPacId)
+          .neq("npi", npi)
+          .limit(50);
+
+        const memberNpis = (groupMembersResult.data || []).map((r: any) => r.npi as string);
+        if (memberNpis.length > 0) {
+          let groupQuery = supabaseAdmin
+            .from("partb_physician_services")
+            .select("*")
+            .in("npi", memberNpis);
+          if (year) groupQuery = groupQuery.eq("year", parseInt(year, 10));
+          const { data: groupData } = await groupQuery.order("total_services", { ascending: false }).limit(200);
+          if (groupData && groupData.length > 0) {
+            return (res as any).json({
+              services: groupData,
+              available: true,
+              billedByGroup: true,
+              groupPacId
+            });
+          }
+        }
+      }
     }
 
     return (res as any).json({ services: data || [], available: true });

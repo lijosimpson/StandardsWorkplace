@@ -1099,6 +1099,7 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
   const [physicianLocations, setPhysicianLocations] = useState<PhysicianLocation[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<PhysicianLocation | null>(null);
   const [focalPartB, setFocalPartB] = useState<PartBServiceRecord[]>([]);
+  const [focalPartBGroupBilled, setFocalPartBGroupBilled] = useState(false);
   const [focalAcos, setFocalAcos] = useState<AcoMembership[]>([]);
   const [orderingStatus, setOrderingStatus] = useState<OrderReferringStatus | null>(null);
   const [selectedNodeAco, setSelectedNodeAco] = useState<AcoMembership[]>([]);
@@ -1123,6 +1124,10 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
     setSearchResults([]);
     setSelectedNode(null);
     setSelectedLocation(null);
+    setFocalPartB([]);
+    setFocalPartBGroupBilled(false);
+    setFocalAcos([]);
+    setOrderingStatus(null);
     try {
       const [net, locResult] = await Promise.all([
         api.getCollaborationNetwork(npi, year || undefined, focalCity, focalState, focalZip),
@@ -1140,6 +1145,7 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
           api.getOrderingStatus(npi)
         ]);
         setFocalPartB(partBResult.services || []);
+        setFocalPartBGroupBilled(partBResult.billedByGroup === true);
         setFocalAcos(acoResult.acos || []);
         setOrderingStatus(orderResult);
       } catch {
@@ -1182,10 +1188,29 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
       {searchResults.length > 0 && (
         <div className="collab-search-results">
           {searchResults.map(p => (
-            <div key={p.npi} className="collab-search-item" onClick={() => { setSearchQ(p.name); loadNetwork(p.npi); }}>
-              <strong>{p.name}</strong>
+            <div key={p.npi} className="collab-search-item" onClick={() => { setSearchQ(p.name || p.npi); loadNetwork(p.npi); }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <strong>{p.name || p.npi}</strong>
+                {p.groupPacId && (
+                  <button
+                    type="button"
+                    className="analyzer-btn-outline"
+                    style={{ fontSize: "11px", padding: "2px 8px", marginLeft: "8px" }}
+                    onClick={e => { e.stopPropagation(); setSearchQ(p.groupPacId!); doSearch(p.groupPacId!); }}
+                    title={`Show all physicians in ${p.groupName || "this group"}`}
+                  >
+                    View Group
+                  </button>
+                )}
+              </div>
               <span className="collab-search-meta">{p.specialty} · {p.city}, {p.state}</span>
-              <span className="collab-search-npi">NPI: {p.npi}</span>
+              <span className="collab-search-npi">
+                NPI: {p.npi}
+                {p.groupName ? ` · ${p.groupName}` : ""}
+              </span>
+              {p.inPrescriberData === false && (
+                <span className="collab-search-npi" style={{ color: "#f97316" }}>No oncology drug claims — geo network only</span>
+              )}
             </div>
           ))}
         </div>
@@ -1266,6 +1291,11 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
                 </div>
                 {/* Enrichment badges */}
                 <div className="collab-enrichment-badges">
+                  {network.focalProvider.limitedProfile && (
+                    <span className="collab-badge" style={{ background: "#92400e", color: "#fef3c7" }} title="Provider not found in oncology drug prescriber data — network is built from practice group and geographic proximity only">
+                      No Rx Claims on File — Geo/Group Network
+                    </span>
+                  )}
                   {orderingStatus?.eligible && (
                     <span className="collab-badge collab-strong" title="Enrolled in CMS Order & Referring list">CMS Ordering Eligible</span>
                   )}
@@ -1293,7 +1323,14 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
               <div className="collab-enrichment-section">
                 {focalPartB.length > 0 && (
                   <div className="enrichment-block">
-                    <h5>Part B Service Billing</h5>
+                    <h5>
+                      Part B Service Billing
+                      {focalPartBGroupBilled && (
+                        <span className="collab-badge" style={{ background: "#92400e", color: "#fef3c7", marginLeft: "8px", fontSize: "11px" }} title="Provider may bill under a group NPI — these are services billed by physicians in the same practice group">
+                          Group Billing
+                        </span>
+                      )}
+                    </h5>
                     <table className="analyzer-table compact-table">
                       <thead><tr><th>Category</th><th>HCPCS</th><th>Description</th><th>Services</th><th>Patients</th><th>Site</th></tr></thead>
                       <tbody>
@@ -1413,8 +1450,16 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
                 </>}
                 {selectedNode.isFocal && network && (
                   <div className="collab-detail-section">
+                    {network.focalProvider.limitedProfile && (
+                      <div className="collab-detail-row" style={{ color: "#f97316", fontSize: "11px" }}>
+                        No oncology drug claims on file — network built from practice group & geography
+                      </div>
+                    )}
                     {network.focalProvider.groupName && (
                       <div className="collab-detail-row"><span>Practice Group</span><span>{network.focalProvider.groupName}</span></div>
+                    )}
+                    {network.focalProvider.groupPacId && (
+                      <div className="collab-detail-row"><span>Group PAC ID</span><span className="mono">{network.focalProvider.groupPacId}</span></div>
                     )}
                     {network.focalProvider.hcpcsCodes.length > 0 && (
                       <div className="collab-detail-row"><span>HCPCS Codes</span><span>{network.focalProvider.hcpcsCodes.length} codes on file</span></div>
