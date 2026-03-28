@@ -3718,6 +3718,24 @@ app.get("/api/analyzer/hospital/search", async (req: Request, res: Response) => 
   }
 });
 
+// Helper: split array into chunks for batched DB queries
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// J9000-J9999: chemotherapy drug injections (Part B administered chemo)
+// 96401-96549: chemo/immunotherapy administration codes
+// These HCPCS ranges identify drugs and procedures oncology surgical/infusion teams bill under Part B
+const ONCOLOGY_PARTB_HCPCS_PREFIXES = ["J9", "Q2", "C9"] as const;
+function isOncologyPartBCode(code: string): boolean {
+  if (!code) return false;
+  if (ONCOLOGY_PARTB_HCPCS_PREFIXES.some(p => code.startsWith(p))) return true;
+  const n = parseInt(code, 10);
+  return (n >= 96401 && n <= 96549); // chemo/immunotherapy admin
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/analyzer/hospital/network?ccn=&year=
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3726,6 +3744,7 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
 
   const { ccn, year = "2023" } = req.query as Record<string, string>;
   if (!ccn) return (res as any).status(400).json({ error: "ccn is required" });
+  const yearInt = parseInt(year, 10);
 
   try {
     // 1. Fetch the hospital
@@ -3748,81 +3767,153 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
 
     const hospital = hospitalData[0];
 
-    // 2. Fetch affiliate hospitals (same health system)
+    // 2. Fetch affiliate hospitals — same health system (primary) + geo fallback (same city)
     let affiliateHospitals: any[] = [];
-    if (hospital.health_system) {
-      const { data: affiliatesData } = await supabaseAdmin
-        .from("hospital_directory")
-        .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
-        .eq("health_system", hospital.health_system)
-        .neq("ccn", ccn)
-        .limit(20);
-      affiliateHospitals = affiliatesData || [];
+    const [sysResult, geoResult2] = await Promise.all([
+      hospital.health_system
+        ? supabaseAdmin.from("hospital_directory")
+            .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
+            .eq("health_system", hospital.health_system).neq("ccn", ccn).limit(50)
+        : Promise.resolve({ data: [] as any[] }),
+      hospital.city && hospital.state
+        ? supabaseAdmin.from("hospital_directory")
+            .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
+            .ilike("city", hospital.city).eq("state", hospital.state).neq("ccn", ccn).limit(20)
+        : Promise.resolve({ data: [] as any[] })
+    ]);
+    const affiliateSeen = new Set<string>();
+    for (const row of [...(sysResult.data || []), ...(geoResult2.data || [])]) {
+      if (!affiliateSeen.has(row.ccn)) { affiliateSeen.add(row.ccn); affiliateHospitals.push(row); }
     }
 
     const allCcns = [ccn, ...affiliateHospitals.map((a: any) => a.ccn)];
 
-    // 3. Get affiliated physician NPIs
-    const { data: affiliationsData } = await supabaseAdmin
-      .from("physician_hospital_affiliations")
-      .select("ind_npi, hosp_ccn, facility_name")
-      .in("hosp_ccn", allCcns)
-      .limit(2000);
+    // 3. Get affiliated physician NPIs — raised limit, batch across CCNs if needed
+    const affiliationChunks = chunk(allCcns, 50);
+    const affiliationRows: any[] = [];
+    for (const ccnChunk of affiliationChunks) {
+      const { data } = await supabaseAdmin
+        .from("physician_hospital_affiliations")
+        .select("ind_npi, hosp_ccn, facility_name")
+        .in("hosp_ccn", ccnChunk)
+        .limit(5000);
+      if (data) affiliationRows.push(...data);
+    }
 
-    const npiSet = [...new Set((affiliationsData || []).map((a: any) => a.ind_npi).filter(Boolean))];
+    const npiSet = [...new Set(affiliationRows.map((a: any) => a.ind_npi).filter(Boolean))] as string[];
 
     // Map NPI → affiliated hospital name
     const npiToHospital = new Map<string, string>();
-    for (const aff of (affiliationsData || [])) {
+    for (const aff of affiliationRows) {
       if (!npiToHospital.has(aff.ind_npi)) {
         npiToHospital.set(aff.ind_npi, aff.facility_name || hospital.name);
       }
     }
 
-    // 4. Get physician details
+    // 4. Get physician details — batched, no NPI cap
     const physicianMap = new Map<string, any>();
     if (npiSet.length > 0) {
-      const { data: physicianData } = await supabaseAdmin
-        .from("physician_group_affiliations")
-        .select("npi, provider_name, specialty, credentials, provider_city, provider_state, provider_zip")
-        .in("npi", npiSet.slice(0, 1000));
-
-      for (const p of (physicianData || [])) {
-        if (!physicianMap.has(p.npi)) {
-          physicianMap.set(p.npi, p);
+      const batches = await Promise.all(
+        chunk(npiSet, 500).map(b =>
+          supabaseAdmin!.from("physician_group_affiliations")
+            .select("npi, provider_name, specialty, credentials, provider_city, provider_state, provider_zip")
+            .in("npi", b)
+        )
+      );
+      for (const result of batches) {
+        for (const p of (result.data || [])) {
+          if (!physicianMap.has(p.npi)) physicianMap.set(p.npi, p);
         }
       }
     }
 
-    // 5. Get prescribing data
-    const prescribingMap = new Map<string, { totalClaims: number; drugs: Set<string>; hasCompanionDx: boolean }>();
+    // 4b. Get HCPCS profiles for affiliated providers (improves specialty classification)
+    const hcpcsProfileMap = new Map<string, string[]>();
     if (npiSet.length > 0) {
-      const { data: rxData } = await supabaseAdmin
-        .from("oncology_drug_prescribers")
-        .select("npi, drug_name, total_claim_count, requires_companion_dx")
-        .in("npi", npiSet.slice(0, 1000))
-        .eq("year", parseInt(year, 10))
-        .limit(2000);
-
-      for (const rx of (rxData || [])) {
-        const existing = prescribingMap.get(rx.npi) || { totalClaims: 0, drugs: new Set<string>(), hasCompanionDx: false };
-        existing.totalClaims += parseInt(rx.total_claim_count || "0", 10);
-        if (rx.drug_name) existing.drugs.add(rx.drug_name);
-        if (rx.requires_companion_dx) existing.hasCompanionDx = true;
-        prescribingMap.set(rx.npi, existing);
+      const batches = await Promise.all(
+        chunk(npiSet, 500).map(b =>
+          supabaseAdmin!.from("oncology_provider_profiles")
+            .select("npi, hcpcs_codes")
+            .in("npi", b)
+            .eq("year", yearInt)
+        )
+      );
+      for (const result of batches) {
+        for (const p of (result.data || [])) {
+          hcpcsProfileMap.set(p.npi, p.hcpcs_codes || []);
+        }
       }
     }
 
-    // 6. Build provider list
+    // 5. Get Part D prescribing data — batched, per-drug claim counts (no NPI cap)
+    // prescribingMap: npi → { totalClaims, drugClaims: Map<drug,claims>, hasCompanionDx }
+    const prescribingMap = new Map<string, {
+      totalClaims: number;
+      drugClaims: Map<string, number>;
+      hasCompanionDx: boolean;
+    }>();
+    if (npiSet.length > 0) {
+      const batches = await Promise.all(
+        chunk(npiSet, 500).map(b =>
+          supabaseAdmin!.from("oncology_drug_prescribers")
+            .select("npi, drug_name, total_claim_count, requires_companion_dx")
+            .in("npi", b)
+            .eq("year", yearInt)
+            .limit(5000)
+        )
+      );
+      for (const result of batches) {
+        for (const rx of (result.data || [])) {
+          const rec = prescribingMap.get(rx.npi) || { totalClaims: 0, drugClaims: new Map<string, number>(), hasCompanionDx: false };
+          const claims = parseInt(rx.total_claim_count || "0", 10);
+          rec.totalClaims += claims;
+          if (rx.drug_name) rec.drugClaims.set(rx.drug_name, (rec.drugClaims.get(rx.drug_name) || 0) + claims);
+          if (rx.requires_companion_dx) rec.hasCompanionDx = true;
+          prescribingMap.set(rx.npi, rec);
+        }
+      }
+    }
+
+    // 5b. Get Part B administered oncology drugs (J-codes, chemo admin) — batched
+    // partbDrugMap: npi → Map<hcpcsDescription, services>
+    const partbDrugMap = new Map<string, Map<string, number>>();
+    if (npiSet.length > 0) {
+      const batches = await Promise.all(
+        chunk(npiSet, 500).map(b =>
+          supabaseAdmin!.from("partb_physician_services")
+            .select("npi, hcpcs_code, hcpcs_description, total_services")
+            .in("npi", b)
+            .eq("year", yearInt)
+            .limit(5000)
+        )
+      );
+      for (const result of batches) {
+        for (const row of (result.data || [])) {
+          if (!isOncologyPartBCode(row.hcpcs_code)) continue;
+          const desc = row.hcpcs_description || row.hcpcs_code;
+          const svcs = parseInt(row.total_services || "0", 10);
+          if (!partbDrugMap.has(row.npi)) partbDrugMap.set(row.npi, new Map());
+          const m = partbDrugMap.get(row.npi)!;
+          m.set(desc, (m.get(desc) || 0) + svcs);
+        }
+      }
+    }
+
+    // 6. Build provider list — include all affiliated providers with physician details
     const allProviders: any[] = [];
     for (const npi of npiSet) {
       const pInfo = physicianMap.get(npi);
       if (!pInfo) continue;
 
-      const rxInfo = prescribingMap.get(npi) || { totalClaims: 0, drugs: new Set<string>(), hasCompanionDx: false };
-      const specialtyType = classifySpecialtyType(pInfo.specialty || "", []);
+      const rxInfo = prescribingMap.get(npi) || { totalClaims: 0, drugClaims: new Map<string, number>(), hasCompanionDx: false };
+      const partbDrugs = partbDrugMap.get(npi);
+      const hcpcs = hcpcsProfileMap.get(npi) || [];
+      const specialtyType = classifySpecialtyType(pInfo.specialty || "", hcpcs);
       const midLevel = isMidLevelCredential(pInfo.credentials || "");
       const referrer = isLikelyReferrer(pInfo.specialty || "");
+
+      // Part B services as additional drug-like items (labelled with source)
+      const partbDrugList = partbDrugs ? [...partbDrugs.entries()].map(([desc, svcs]) => ({ drug: desc, claims: svcs, source: "partb" })) : [];
 
       allProviders.push({
         npi,
@@ -3834,7 +3925,8 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
         state: pInfo.provider_state || "",
         zip: pInfo.provider_zip || "",
         totalClaims: rxInfo.totalClaims,
-        drugs: [...rxInfo.drugs],
+        drugs: [...rxInfo.drugClaims.keys()],
+        partbDrugs: partbDrugList,
         hasCompanionDx: rxInfo.hasCompanionDx,
         affiliatedHospital: npiToHospital.get(npi) || hospital.name,
         isMidLevel: midLevel,
@@ -3842,29 +3934,39 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
       });
     }
 
-    // 7. Group into categories, sorted by totalClaims DESC, limit 30
+    // 7. Group into categories, sorted by totalClaims DESC, limit 50
     const sortByClaimsDesc = (a: any, b: any) => b.totalClaims - a.totalClaims;
 
     const providers = {
-      oncology:   allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "oncology").sort(sortByClaimsDesc).slice(0, 30),
-      hematology: allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "hematology").sort(sortByClaimsDesc).slice(0, 30),
-      surgery:    allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "surgery").sort(sortByClaimsDesc).slice(0, 30),
-      radiology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && (p.specialtyType === "radiology" || p.specialtyType === "radiation")).sort(sortByClaimsDesc).slice(0, 30),
-      pathology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "pathology").sort(sortByClaimsDesc).slice(0, 30),
-      midlevels:  allProviders.filter(p => p.isMidLevel).sort(sortByClaimsDesc).slice(0, 30),
-      referrers:  allProviders.filter(p => p.isReferrer).sort(sortByClaimsDesc).slice(0, 30)
+      oncology:   allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "oncology").sort(sortByClaimsDesc).slice(0, 50),
+      hematology: allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "hematology").sort(sortByClaimsDesc).slice(0, 50),
+      surgery:    allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "surgery").sort(sortByClaimsDesc).slice(0, 50),
+      radiology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && (p.specialtyType === "radiology" || p.specialtyType === "radiation")).sort(sortByClaimsDesc).slice(0, 50),
+      pathology:  allProviders.filter(p => !p.isMidLevel && !p.isReferrer && p.specialtyType === "pathology").sort(sortByClaimsDesc).slice(0, 50),
+      midlevels:  allProviders.filter(p => p.isMidLevel).sort(sortByClaimsDesc).slice(0, 50),
+      referrers:  allProviders.filter(p => p.isReferrer).sort(sortByClaimsDesc).slice(0, 50)
     };
 
-    // 8. Prescribing highlights
-    const drugClaimsMap = new Map<string, { claims: number; providers: number; companionDx: boolean }>();
+    // 8. Prescribing highlights — per-drug claim counts (fixed) + Part B administered drugs
+    const drugClaimsMap = new Map<string, { claims: number; providers: number; companionDx: boolean; source: string }>();
     let companionDxCount = 0;
     for (const [, rxInfo] of prescribingMap) {
       if (rxInfo.hasCompanionDx) companionDxCount++;
-      for (const drug of rxInfo.drugs) {
-        const existing = drugClaimsMap.get(drug) || { claims: 0, providers: 0, companionDx: false };
-        existing.claims += rxInfo.totalClaims;
+      for (const [drug, claims] of rxInfo.drugClaims) {
+        const existing = drugClaimsMap.get(drug) || { claims: 0, providers: 0, companionDx: false, source: "partd" };
+        existing.claims += claims;
         existing.providers += 1;
         drugClaimsMap.set(drug, existing);
+      }
+    }
+    // Add Part B oncology drugs to highlights (de-duplicated by description)
+    for (const [, drugMap] of partbDrugMap) {
+      for (const [desc, svcs] of drugMap) {
+        const key = `[Part B] ${desc}`;
+        const existing = drugClaimsMap.get(key) || { claims: 0, providers: 0, companionDx: false, source: "partb" };
+        existing.claims += svcs;
+        existing.providers += 1;
+        drugClaimsMap.set(key, existing);
       }
     }
 
