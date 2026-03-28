@@ -3800,7 +3800,42 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
       if (data) affiliationRows.push(...data);
     }
 
-    const npiSet = [...new Set(affiliationRows.map((a: any) => a.ind_npi).filter(Boolean))] as string[];
+    const affiliationNpiSet = new Set<string>(
+      affiliationRows.map((a: any) => a.ind_npi).filter(Boolean)
+    );
+
+    // 3b. Supplemental geo-specialty search: catch oncology-relevant providers in the same
+    //     city who are NOT in physician_hospital_affiliations (CMS affiliation data has gaps —
+    //     thoracic surgeons, gynecologic oncologists, etc. are frequently missing).
+    //     Specialties searched: all surgical, radiation, pathology, and oncology keywords.
+    const ONCOLOGY_GEO_SPECIALTIES = [
+      "oncology", "hematology", "thoracic", "surgical oncology", "gynecologic oncology",
+      "radiation", "pathology", "breast surgery", "colorectal", "hepatobiliary",
+      "urologic oncology", "neuro-oncology", "nuclear medicine", "bone marrow"
+    ];
+    const geoSupplementalRows: any[] = [];
+    if (hospital.city && hospital.state) {
+      const geoSpecResults = await Promise.all(
+        ONCOLOGY_GEO_SPECIALTIES.map(spec =>
+          supabaseAdmin!.from("physician_group_affiliations")
+            .select("npi, provider_name, specialty, credentials, provider_city, provider_state, provider_zip")
+            .ilike("provider_city", hospital.city)
+            .eq("provider_state", hospital.state)
+            .ilike("specialty", `%${spec}%`)
+            .limit(200)
+        )
+      );
+      for (const result of geoSpecResults) {
+        for (const row of (result.data || [])) {
+          if (!affiliationNpiSet.has(row.npi)) {
+            geoSupplementalRows.push(row);
+            affiliationNpiSet.add(row.npi);
+          }
+        }
+      }
+    }
+
+    const npiSet = [...affiliationNpiSet] as string[];
 
     // Map NPI → affiliated hospital name
     const npiToHospital = new Map<string, string>();
@@ -3809,9 +3844,19 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
         npiToHospital.set(aff.ind_npi, aff.facility_name || hospital.name);
       }
     }
+    // Geo-supplemental providers: label with hospital city (best available)
+    for (const row of geoSupplementalRows) {
+      if (!npiToHospital.has(row.npi)) {
+        npiToHospital.set(row.npi, `${hospital.city} (geo match)`);
+      }
+    }
 
     // 4. Get physician details — batched, no NPI cap
+    //    Pre-seed with geo-supplemental rows (already fetched above)
     const physicianMap = new Map<string, any>();
+    for (const row of geoSupplementalRows) {
+      if (!physicianMap.has(row.npi)) physicianMap.set(row.npi, row);
+    }
     if (npiSet.length > 0) {
       const batches = await Promise.all(
         chunk(npiSet, 500).map(b =>
