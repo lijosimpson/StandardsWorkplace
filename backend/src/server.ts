@@ -3767,13 +3767,31 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
 
     const hospital = hospitalData[0];
 
-    // 2. Fetch affiliate hospitals — same health system (primary) + geo fallback (same city)
+    // 2. Fetch affiliate hospitals — same health system (primary) + name-keyword fallback + geo fallback
     let affiliateHospitals: any[] = [];
-    const [sysResult, geoResult2] = await Promise.all([
+
+    // Extract the most distinctive word from the hospital name for name-based matching.
+    // This catches multi-city health systems (e.g. "Northside Hospital Atlanta" → finds
+    // Northside Cherokee, Forsyth, Gwinnett even though they're in different cities).
+    const genericWords = new Set([
+      "the", "of", "at", "in", "and", "hospital", "medical", "center", "health",
+      "care", "regional", "general", "community", "university", "memorial", "system",
+      "institute", "clinic", "children", "childrens", "saint", "st", "mount", "mt"
+    ]);
+    const nameKeyword = hospital.name
+      ?.split(/[\s\-&,]+/)
+      .find((w: string) => w.length > 3 && !genericWords.has(w.toLowerCase().replace(/['.]/g, "")));
+
+    const [sysResult, nameResult, geoResult2] = await Promise.all([
       hospital.health_system
         ? supabaseAdmin.from("hospital_directory")
             .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
             .eq("health_system", hospital.health_system).neq("ccn", ccn).limit(50)
+        : Promise.resolve({ data: [] as any[] }),
+      nameKeyword
+        ? supabaseAdmin.from("hospital_directory")
+            .select("ccn, pac_id, name, city, state, zip, hospital_type, health_system")
+            .ilike("name", `%${nameKeyword}%`).neq("ccn", ccn).limit(30)
         : Promise.resolve({ data: [] as any[] }),
       hospital.city && hospital.state
         ? supabaseAdmin.from("hospital_directory")
@@ -3782,7 +3800,7 @@ app.get("/api/analyzer/hospital/network", async (req: Request, res: Response) =>
         : Promise.resolve({ data: [] as any[] })
     ]);
     const affiliateSeen = new Set<string>();
-    for (const row of [...(sysResult.data || []), ...(geoResult2.data || [])]) {
+    for (const row of [...(sysResult.data || []), ...(nameResult.data || []), ...(geoResult2.data || [])]) {
       if (!affiliateSeen.has(row.ccn)) { affiliateSeen.add(row.ccn); affiliateHospitals.push(row); }
     }
 
