@@ -406,6 +406,7 @@ function App() {
 
   const detailPanelRef = useRef<HTMLElement>(null);
   const processSectionRef = useRef<HTMLElement>(null);
+  const isInitialLoad = useRef(true);
   const [processDocFiles, setProcessDocFiles] = useState<Record<number, File | null>>({});
   const [operationsOpen, setOperationsOpen] = useState(false);
   const [qualitySummary, setQualitySummary] = useState<QualityMetricSummaryResponse | null>(null);
@@ -627,10 +628,32 @@ function App() {
 
   useEffect(() => {
     setLoading(true);
-    loadHospitals().catch((err) => setError(err.message || "Failed to load hospitals")).finally(() => setLoading(false));
+    (async () => {
+      const hospitalsData = await api.getHospitals();
+      setHospitals(hospitalsData);
+      if (hospitalsData.length === 0) return;
+      const hospitalId = hospitalsData[0].id;
+      setSelectedHospitalId(hospitalId);
+
+      const standardsData = await api.getStandards(hospitalId);
+      setStandards(standardsData);
+      if (standardsData.length === 0) return;
+      const code = standardsData[0].code;
+      setSelectedStandardCode(code);
+
+      const detailData = await api.getStandardDetail(hospitalId, code);
+      setDetail(detailData);
+      setEditableMetricLabels(detailData.standard.numeratorComponents);
+    })()
+      .catch((err) => setError(err.message || "Failed to load"))
+      .finally(() => {
+        setLoading(false);
+        isInitialLoad.current = false;
+      });
   }, []);
 
   useEffect(() => {
+    if (isInitialLoad.current) return;
     if (!selectedHospitalId) return;
     setLoading(true);
     loadStandards(selectedHospitalId)
@@ -665,6 +688,7 @@ function App() {
   }, [operationsOpen, selectedHospitalId]);
 
   useEffect(() => {
+    if (isInitialLoad.current) return;
     if (!selectedHospitalId || !selectedStandardCode) return;
     setLoading(true);
     loadDetail(selectedHospitalId, selectedStandardCode)
