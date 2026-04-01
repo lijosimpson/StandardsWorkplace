@@ -1,6 +1,6 @@
 {
   "_comment": "Auto-updated by scripts/checkCmsUpdates.js — tracks last-seen CMS dataset modification dates",
-  "_lastChecked": null,
+  "_lastChecked": "2026-04-01T09:23:15.011Z",
   "datasets": {
     "medicare_partb": {
       "label": "Medicare Part B — Physician/Other Practitioners by Provider & Service",
@@ -27,7 +27,7 @@
       "knownUrl": null
     },
     "facility_affiliations": {
-      "label": "Facility Affiliations",
+      "label": "Facility Affiliations (Physician-Hospital)",
       "lastModified": null,
       "latestYear": 2024,
       "knownUrl": null
