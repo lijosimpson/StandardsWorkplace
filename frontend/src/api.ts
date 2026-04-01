@@ -513,7 +513,7 @@ export const api = {
     meetingId: string,
     role: UserRole,
     userName: string,
-    payload: Partial<Pick<CommitteeMeeting, "title" | "meetingDate" | "quarter" | "presenter" | "conferenceCaseCount" | "status" | "notes" | "oncoLensAssist" | "standardCodes" | "referencedRoleAssignmentIds" | "referencedUploadIds" | "appendices" | "minutes">>
+    payload: Partial<Omit<CommitteeMeeting, "appendices">> & { appendices?: CommitteeMeetingAppendixInput[] }
   ): Promise<CommitteeMeeting> => {
     const res = await fetch(`${API_BASE}/hospitals/${hospitalId}/committee-meetings/${meetingId}`, {
       method: "PATCH",
@@ -674,6 +674,11 @@ export const api = {
   getOpenPaymentsSummary: async (year?: string): Promise<OpenPaymentsSummary> => {
     const params = year ? `?year=${year}` : "";
     const res = await fetch(`${API_BASE}/analyzer/open-payments/summary${params}`);
+    return parse(res);
+  },
+
+  getMedicaidStates: async (): Promise<{ states: string[] }> => {
+    const res = await fetch(`${API_BASE}/analyzer/medicaid/states`);
     return parse(res);
   },
 

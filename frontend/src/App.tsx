@@ -212,6 +212,8 @@ const buildStandardCommitteeAppendixTemplate = (
   ].join("\n");
 };
 
+const todayIsoDate = (): string => new Date().toISOString().slice(0, 10);
+
 const buildWordDocumentHtml = (title: string, body: string): string => `<!DOCTYPE html>
 <html>
   <head>
@@ -436,7 +438,7 @@ function App() {
     endDate: "",
     notes: ""
   });
-  const [newCommitteeMeeting, setNewCommitteeMeeting] = useState<{ title: string; meetingDate: string; quarter: CommitteeMeeting["quarter"]; presenter: string; conferenceCaseCount: number; notes: string; standardCodes: string[]; referencedRoleAssignmentIds: string[]; referencedUploadIds: string[]; appendices: CommitteeMeetingAppendixInput[]; minutes: string }>({
+  const createEmptyCommitteeMeetingForm = (): { title: string; meetingDate: string; quarter: CommitteeMeeting["quarter"]; presenter: string; conferenceCaseCount: number; notes: string; standardCodes: string[]; referencedRoleAssignmentIds: string[]; referencedUploadIds: string[]; appendices: CommitteeMeetingAppendixInput[]; minutes: string } => ({
     title: "",
     meetingDate: "",
     quarter: "Q1",
@@ -449,9 +451,24 @@ function App() {
     appendices: [],
     minutes: ""
   });
+  const mapCommitteeMeetingToForm = (item: CommitteeMeeting): { title: string; meetingDate: string; quarter: CommitteeMeeting["quarter"]; presenter: string; conferenceCaseCount: number; notes: string; standardCodes: string[]; referencedRoleAssignmentIds: string[]; referencedUploadIds: string[]; appendices: CommitteeMeetingAppendixInput[]; minutes: string } => ({
+    title: item.title,
+    meetingDate: item.meetingDate,
+    quarter: item.quarter,
+    presenter: item.presenter,
+    conferenceCaseCount: item.conferenceCaseCount,
+    notes: item.notes,
+    standardCodes: item.standardCodes,
+    referencedRoleAssignmentIds: item.referencedRoleAssignmentIds,
+    referencedUploadIds: item.referencedUploadIds,
+    appendices: item.appendices.map(({ sourceType, sourceId, explanation }) => ({ sourceType, sourceId, explanation })),
+    minutes: item.minutes
+  });
+  const [newCommitteeMeeting, setNewCommitteeMeeting] = useState<{ title: string; meetingDate: string; quarter: CommitteeMeeting["quarter"]; presenter: string; conferenceCaseCount: number; notes: string; standardCodes: string[]; referencedRoleAssignmentIds: string[]; referencedUploadIds: string[]; appendices: CommitteeMeetingAppendixInput[]; minutes: string }>(createEmptyCommitteeMeetingForm());
+  const [editingCommitteeMeetingId, setEditingCommitteeMeetingId] = useState<string | null>(null);
   const [standardMinutesEntry, setStandardMinutesEntry] = useState<{ title: string; meetingDate: string; quarter: CommitteeMeeting["quarter"]; presenter: string; notes: string; minutes: string; referencedUploadIds: string[]; appendices: CommitteeAppendixDraft[] }>({
     title: "",
-    meetingDate: "",
+    meetingDate: todayIsoDate(),
     quarter: "Q1",
     presenter: "",
     notes: "",
@@ -503,7 +520,7 @@ function App() {
 
   const makeStandardMinutesEntry = (currentDetail: StandardDetailResponse, quarter: CommitteeMeeting["quarter"] = "Q1") => ({
     title: `${currentDetail.standard.code} ${currentDetail.standard.name} review`,
-    meetingDate: "",
+    meetingDate: todayIsoDate(),
     quarter,
     presenter: "",
     notes: "",
@@ -1120,35 +1137,54 @@ function App() {
     }
   };
 
+  const cancelCommitteeMeetingEdit = () => {
+    setEditingCommitteeMeetingId(null);
+    setNewCommitteeMeeting(createEmptyCommitteeMeetingForm());
+    setError("");
+  };
+
+  const startCommitteeMeetingEdit = (item: CommitteeMeeting) => {
+    setEditingCommitteeMeetingId(item.id);
+    setNewCommitteeMeeting(mapCommitteeMeetingToForm(item));
+    setNotice("Committee minutes entry loaded for editing.");
+    setError("");
+  };
+
   const createCommitteeMeeting = async () => {
     if (!selectedHospitalId || role === "auditor") return;
     if (!newCommitteeMeeting.title.trim() || !newCommitteeMeeting.meetingDate) {
       setError("Committee meetings require title and meeting date.");
       return;
     }
+    const payload = {
+      title: newCommitteeMeeting.title.trim(),
+      meetingDate: newCommitteeMeeting.meetingDate,
+      quarter: newCommitteeMeeting.quarter,
+      presenter: newCommitteeMeeting.presenter.trim(),
+      conferenceCaseCount: Number(newCommitteeMeeting.conferenceCaseCount) || 0,
+      notes: newCommitteeMeeting.notes.trim(),
+      standardCodes: newCommitteeMeeting.standardCodes,
+      referencedRoleAssignmentIds: newCommitteeMeeting.referencedRoleAssignmentIds,
+      referencedUploadIds: newCommitteeMeeting.referencedUploadIds,
+      appendices: newCommitteeMeeting.appendices,
+      minutes: newCommitteeMeeting.minutes.trim()
+    };
     try {
       setLoading(true);
-      await api.createCommitteeMeeting(selectedHospitalId, role, userName, {
-        title: newCommitteeMeeting.title.trim(),
-        meetingDate: newCommitteeMeeting.meetingDate,
-        quarter: newCommitteeMeeting.quarter,
-        presenter: newCommitteeMeeting.presenter.trim(),
-        conferenceCaseCount: Number(newCommitteeMeeting.conferenceCaseCount) || 0,
-        notes: newCommitteeMeeting.notes.trim(),
-        standardCodes: newCommitteeMeeting.standardCodes,
-        referencedRoleAssignmentIds: newCommitteeMeeting.referencedRoleAssignmentIds,
-        referencedUploadIds: newCommitteeMeeting.referencedUploadIds,
-        appendices: newCommitteeMeeting.appendices,
-        minutes: newCommitteeMeeting.minutes.trim()
-      });
-      setNewCommitteeMeeting({ title: "", meetingDate: "", quarter: "Q1", presenter: "", conferenceCaseCount: 0, notes: "", standardCodes: [committeeRoleStandardCode], referencedRoleAssignmentIds: [], referencedUploadIds: [], appendices: [], minutes: "" });
+      if (editingCommitteeMeetingId) {
+        await api.updateCommitteeMeeting(selectedHospitalId, editingCommitteeMeetingId, role, userName, payload);
+      } else {
+        await api.createCommitteeMeeting(selectedHospitalId, role, userName, payload);
+      }
+      setEditingCommitteeMeetingId(null);
+      setNewCommitteeMeeting(createEmptyCommitteeMeetingForm());
       await loadCommitteeMeetings(selectedHospitalId);
       await loadAuditLogs(selectedHospitalId);
       await loadRegistryDashboard(selectedHospitalId);
-      setNotice("Committee minutes added.");
+      setNotice(editingCommitteeMeetingId ? "Committee minutes updated." : "Committee minutes added.");
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create committee meeting");
+      setError(err instanceof Error ? err.message : editingCommitteeMeetingId ? "Failed to update committee meeting" : "Failed to create committee meeting");
     } finally {
       setLoading(false);
     }
@@ -1214,6 +1250,10 @@ function App() {
     try {
       setLoading(true);
       await api.deleteCommitteeMeeting(selectedHospitalId, meetingId, role, userName);
+      if (editingCommitteeMeetingId === meetingId) {
+        setEditingCommitteeMeetingId(null);
+        setNewCommitteeMeeting(createEmptyCommitteeMeetingForm());
+      }
       await loadCommitteeMeetings(selectedHospitalId);
       await loadAuditLogs(selectedHospitalId);
       await loadRegistryDashboard(selectedHospitalId);
@@ -1476,6 +1516,37 @@ function App() {
         body: buildProcessStepTemplate(detail, processIndex, displayedStepLabel)
       }
     }));
+    setError("");
+  };
+
+  const reopenStandardEvidenceDraft = () => {
+    if (!detail) return;
+    const savedDraft = findSavedTemplateDraft(detail, "standard-evidence");
+    if (!savedDraft) return;
+    setStandardEvidenceDraft({ title: savedDraft.title, body: savedDraft.body });
+    setNotice("Saved standard draft reopened for editing.");
+    setError("");
+  };
+
+  const reopenProcessTemplateDraft = (processIndex: number) => {
+    if (!detail) return;
+    const savedDraft = findSavedTemplateDraft(detail, "process-step", processIndex);
+    if (!savedDraft) return;
+    setProcessTemplateDrafts((prev) => ({
+      ...prev,
+      [processIndex]: { title: savedDraft.title, body: savedDraft.body }
+    }));
+    setNotice(`Step ${processIndex + 1} saved draft reopened for editing.`);
+    setError("");
+  };
+
+  const reopenCommitteeAppendixDraft = () => {
+    if (!detail) return;
+    const savedDraft = findSavedTemplateDraft(detail, "committee-appendix");
+    if (!savedDraft) return;
+    setAppendixTemplateTitle(savedDraft.title);
+    setAppendixTemplateBody(savedDraft.body);
+    setNotice("Saved committee appendix draft reopened for editing.");
     setError("");
   };
 
@@ -1770,6 +1841,7 @@ function App() {
                       {standardEvidenceDraft ? "Reset Standard Template" : "Start New Standard Template"}
                     </button>
                     <button type="button" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceDraft}>Save Draft</button>
+                    <button type="button" disabled={!standardEvidenceSavedDraft} onClick={reopenStandardEvidenceDraft}>Edit Saved Draft</button>
                     <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "doc")}>Download .doc</button>
                     <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx")}>Download .docx</button>
                     <button type="button" className="primary" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceTemplate}>Save To Standard Files</button>
@@ -1871,6 +1943,7 @@ function App() {
                                   {processTemplateDrafts[idx] ? "Reset Step Template" : "Start New Step Template"}
                                 </button>
                                 <button type="button" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateEditor(idx)}>Save Draft</button>
+                                <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx)} onClick={() => reopenProcessTemplateDraft(idx)}>Edit Saved Draft</button>
                                 <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "doc")}>Download .doc</button>
                                 <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "docx")}>Download .docx</button>
                                 <button type="button" className="primary" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateDraft(idx)}>Save Step Document</button>
@@ -2141,6 +2214,7 @@ function App() {
                     />
                     <button type="button" onClick={rebuildStandardAppendixTemplate}>Rebuild Template</button>
                     <button type="button" disabled={role === "auditor"} onClick={saveCommitteeAppendixDraft}>Save Draft</button>
+                    <button type="button" disabled={!committeeAppendixSavedDraft} onClick={reopenCommitteeAppendixDraft}>Edit Saved Draft</button>
                     <button
                       type="button"
                       disabled={!committeeAppendixSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: committeeAppendixSavedDraft?.id || "" }))}
@@ -2165,21 +2239,11 @@ function App() {
 
                 <article className="section-card full-width-card">
                   <h3>Add To Cancer Committee Minutes</h3>
-                  <p className="muted">Create the minutes entry for this standard, then use the appendix buttons in the process and uploads sections on this page to move supporting files into the appendix list with an explanation.</p>
-                  <div className="ops-form committee-form">
-                    <input placeholder="Minutes title" value={standardMinutesEntry.title} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, title: e.target.value }))} />
-                    <input type="date" value={standardMinutesEntry.meetingDate} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, meetingDate: e.target.value }))} />
-                    <select value={standardMinutesEntry.quarter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, quarter: e.target.value as CommitteeMeeting["quarter"] }))}>
-                      <option value="Q1">Q1</option>
-                      <option value="Q2">Q2</option>
-                      <option value="Q3">Q3</option>
-                      <option value="Q4">Q4</option>
-                    </select>
-                    <input placeholder="Presenter / owner" value={standardMinutesEntry.presenter} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, presenter: e.target.value }))} />
-                    <button disabled={role === "auditor"} onClick={createStandardCommitteeMeeting}>Add This Standard To Minutes</button>
+                  <p className="muted">Use the standard review title and today's date to create a committee minutes entry for this standard. Any queued appendices below will be attached to that entry.</p>
+                  <div className="button-row">
+                    <button type="button" disabled={role === "auditor"} onClick={createStandardCommitteeMeeting}>Add To Cancer Committee Minutes</button>
+                    <span className="muted">{standardMinutesEntry.title} | {standardMinutesEntry.meetingDate} | {standardMinutesEntry.quarter}</span>
                   </div>
-                  <textarea placeholder="Agenda summary or action-item notes" value={standardMinutesEntry.notes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, notes: e.target.value }))} />
-                  <textarea placeholder="Formal minutes text" value={standardMinutesEntry.minutes} disabled={role === "auditor"} onChange={(e) => setStandardMinutesEntry((prev) => ({ ...prev, minutes: e.target.value }))} />
                   {standardMinutesEntry.appendices.length > 0 && (
                     <div className="selection-panel">
                       <strong>Appendices queued for these minutes</strong>
@@ -2461,6 +2525,7 @@ function App() {
           <div className="ops-panel">
             <h3>Cancer Committee Minutes</h3>
             <p className="muted">Create committee minutes entries, tag the standards discussed, and attach the current 2.1 role holders with their tracked start and end dates.</p>
+            {editingCommitteeMeetingId && <p className="muted">Editing an existing committee minutes entry. Save changes or cancel to return to add mode.</p>}
             <div className="ops-form committee-form">
               <input placeholder="Meeting title" value={newCommitteeMeeting.title} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, title: e.target.value }))} />
               <input type="date" value={newCommitteeMeeting.meetingDate} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, meetingDate: e.target.value }))} />
@@ -2472,7 +2537,8 @@ function App() {
               </select>
               <input placeholder="Presenter / CLP lead" value={newCommitteeMeeting.presenter} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, presenter: e.target.value }))} />
               <input type="number" min={0} placeholder="Conference cases" value={newCommitteeMeeting.conferenceCaseCount} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, conferenceCaseCount: Number(e.target.value) || 0 }))} />
-              <button disabled={role === "auditor"} onClick={createCommitteeMeeting}>Add Minutes</button>
+              <button disabled={role === "auditor"} onClick={createCommitteeMeeting}>{editingCommitteeMeetingId ? "Save Changes" : "Add Minutes"}</button>
+              {editingCommitteeMeetingId && <button type="button" disabled={role === "auditor"} onClick={cancelCommitteeMeetingEdit}>Cancel Edit</button>}
             </div>
             <textarea placeholder="Agenda summary or action-item notes" value={newCommitteeMeeting.notes} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, notes: e.target.value }))} />
             <textarea placeholder="Formal minutes text" value={newCommitteeMeeting.minutes} disabled={role === "auditor"} onChange={(e) => setNewCommitteeMeeting((prev) => ({ ...prev, minutes: e.target.value }))} />
@@ -2542,6 +2608,7 @@ function App() {
                       <div className="muted">Roles: {referencedAssignments.map((assignment) => `${assignment.roleName} - ${assignment.personName}`).join("; ")}</div>
                     )}
                     <div className="button-row">
+                      <button disabled={role === "auditor"} onClick={() => startCommitteeMeetingEdit(item)}>Edit</button>
                       <button disabled={role === "auditor"} onClick={() => setCommitteeMeetingStatus(item, "agenda-ready")}>Agenda Ready</button>
                       <button disabled={role === "auditor"} onClick={() => setCommitteeMeetingStatus(item, "held")}>Held</button>
                       <button disabled={role === "auditor"} onClick={() => setCommitteeMeetingStatus(item, "minutes-uploaded")}>Minutes Uploaded</button>

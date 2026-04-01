@@ -341,6 +341,20 @@ function PrescribersTab({ year, state, search, onCrossRef }: { year: string; sta
   const [companionOnly, setCompanionOnly] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [selectedNpi, setSelectedNpi] = useState<string | null>(null);
+  const [crossRefData, setCrossRefData] = useState<CrossReferenceResponse | null>(null);
+  const [crossRefLoading, setCrossRefLoading] = useState(false);
+  const [crossRefError, setCrossRefError] = useState("");
+
+  useEffect(() => {
+    if (!selectedNpi) { setCrossRefData(null); return; }
+    setCrossRefLoading(true);
+    setCrossRefError("");
+    api.getCrossReference(selectedNpi)
+      .then(setCrossRefData)
+      .catch((e: Error) => setCrossRefError(e.message || "Failed to load provider details"))
+      .finally(() => setCrossRefLoading(false));
+  }, [selectedNpi]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -451,7 +465,12 @@ function PrescribersTab({ year, state, search, onCrossRef }: { year: string; sta
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id}>
+                <tr
+                  key={row.id}
+                  className={selectedNpi === row.npi ? "analyzer-row-selected" : ""}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => setSelectedNpi(prev => prev === row.npi ? null : row.npi)}
+                >
                   <td className="mono">{row.npi}</td>
                   <td>{row.nppes_provider_first_name} {row.nppes_provider_last_org_name}</td>
                   <td>{row.nppes_provider_city}</td>
@@ -465,8 +484,8 @@ function PrescribersTab({ year, state, search, onCrossRef }: { year: string; sta
                   <td className="num">{fmt(row.bene_count)}</td>
                   <td className="num">{fmtUsd(row.total_drug_cost)}</td>
                   <td>
-                    <button type="button" className="analyzer-link-btn" onClick={() => onCrossRef(row.npi)}>
-                      View →
+                    <button type="button" className="analyzer-link-btn" onClick={(e) => { e.stopPropagation(); onCrossRef(row.npi); }}>
+                      Open Ref ↗
                     </button>
                   </td>
                 </tr>
@@ -481,6 +500,115 @@ function PrescribersTab({ year, state, search, onCrossRef }: { year: string; sta
           <button type="button" disabled={page === 1} onClick={() => setPage(page - 1)} className="analyzer-btn-outline">← Prev</button>
           <span>Page {page} of {Math.ceil(total / 50)}</span>
           <button type="button" disabled={page >= Math.ceil(total / 50)} onClick={() => setPage(page + 1)} className="analyzer-btn-outline">Next →</button>
+        </div>
+      )}
+
+      {/* Inline provider detail panel */}
+      {selectedNpi && (
+        <div className="prescriber-detail-panel">
+          <div className="prescriber-detail-header">
+            <div>
+              <strong>Provider Detail</strong>
+              {crossRefData?.provider && (
+                <span style={{ marginLeft: 12, color: "#94a3b8", fontSize: 13 }}>
+                  {crossRefData.provider.name} · {crossRefData.provider.specialty} · {crossRefData.provider.city}, {crossRefData.provider.state}
+                </span>
+              )}
+              <span className="mono" style={{ marginLeft: 12, fontSize: 12, color: "#64748b" }}>NPI: {selectedNpi}</span>
+            </div>
+            <button type="button" className="drawer-close-btn" onClick={() => setSelectedNpi(null)}>✕</button>
+          </div>
+
+          {crossRefLoading && <div className="analyzer-loading" style={{ padding: "16px" }}>Loading provider data…</div>}
+          {crossRefError && <div className="analyzer-error">{crossRefError}</div>}
+
+          {crossRefData && !crossRefLoading && (
+            <div className="prescriber-detail-body">
+              {/* Drugs Ordered — Part D */}
+              {crossRefData.prescriptions.length > 0 ? (
+                <div className="prescriber-detail-section">
+                  <h4>Drugs Ordered — Medicare Part D ({crossRefData.prescriptions.length} records)</h4>
+                  <div className="analyzer-table-wrap">
+                    <table className="analyzer-table compact-table">
+                      <thead>
+                        <tr>
+                          <th>Drug</th>
+                          <th>Generic Name</th>
+                          <th>Year</th>
+                          <th>Claims</th>
+                          <th>Patients</th>
+                          <th>Drug Cost</th>
+                          <th>Companion Dx</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {crossRefData.prescriptions.map(rx => (
+                          <tr key={rx.id}>
+                            <td><strong>{rx.drug_name}</strong></td>
+                            <td className="muted-cell">{rx.generic_name}</td>
+                            <td>{rx.year}</td>
+                            <td className="num">{fmt(rx.total_claim_count)}</td>
+                            <td className="num">{fmt(rx.bene_count)}</td>
+                            <td className="num">{fmtUsd(rx.total_drug_cost)}</td>
+                            <td><CompanionBadge required={rx.requires_companion_dx} testType={rx.companion_test_type} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="prescriber-detail-section">
+                  <h4>Drugs Ordered — Medicare Part D</h4>
+                  <div className="analyzer-empty" style={{ padding: "12px" }}>No Part D drug records found for this provider.</div>
+                </div>
+              )}
+
+              {/* NGS/IHC Tests in same state */}
+              {crossRefData.ngsLabs && crossRefData.ngsLabs.length > 0 && (
+                <div className="prescriber-detail-section">
+                  <h4>
+                    NGS / IHC / FISH Tests — {crossRefData.provider?.state || "Same State"}
+                    <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8, fontWeight: 400 }}>
+                      Labs performing tests required by this provider's drugs (Medicare Part B proxy — ordering physician not recorded)
+                    </span>
+                  </h4>
+                  <div className="analyzer-table-wrap">
+                    <table className="analyzer-table compact-table">
+                      <thead>
+                        <tr>
+                          <th>Lab Name</th>
+                          <th>City</th>
+                          <th>Test Type</th>
+                          <th>Code</th>
+                          <th>Year</th>
+                          <th>Services</th>
+                          <th>Patients</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {crossRefData.ngsLabs.map((lab, i) => (
+                          <tr key={`${lab.npi}-${lab.hcpcs_code}-${i}`}>
+                            <td><strong>{lab.provider_last_name}{lab.provider_first_name ? `, ${lab.provider_first_name}` : ""}</strong></td>
+                            <td>{lab.nppes_provider_city}</td>
+                            <td><span className={`collab-badge collab-${lab.test_category === "NGS" ? "strong" : "moderate"}`}>{lab.test_category}</span></td>
+                            <td className="mono" title={lab.hcpcs_description}>{lab.hcpcs_code}</td>
+                            <td>{lab.year}</td>
+                            <td className="num">{fmt(lab.line_srvc_cnt)}</td>
+                            <td className="num">{fmt(lab.bene_unique_cnt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {crossRefData.prescriptions.length === 0 && (!crossRefData.ngsLabs || crossRefData.ngsLabs.length === 0) && (
+                <div className="analyzer-empty" style={{ padding: "16px" }}>No data found for this NPI in the loaded datasets. Ensure the ETL pipeline has been run.</div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -652,6 +780,7 @@ function MedicaidTab({ year, state }: { year: string; state: string }) {
   const [drug, setDrug] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [availableStates, setAvailableStates] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -660,6 +789,12 @@ function MedicaidTab({ year, state }: { year: string; state: string }) {
       const data = await api.getMedicaidUtilization({ year, state, drug, page, limit: 50 });
       setRows(data.data);
       setTotal(data.total);
+      if (data.total === 0) {
+        const statesData = await api.getMedicaidStates();
+        setAvailableStates(statesData.states);
+      } else {
+        setAvailableStates([]);
+      }
     } catch (e: any) {
       setError(e.message || "Failed to load Medicaid data");
     } finally {
@@ -695,7 +830,21 @@ function MedicaidTab({ year, state }: { year: string; state: string }) {
 
       {!loading && rows.length === 0 && !error && (
         <div className="analyzer-empty">
-          No data found. Download Medicaid state utilization data from data.medicaid.gov and run the ETL pipeline.
+          {availableStates.length === 0 ? (
+            <>No data found. Download Medicaid state utilization data from data.medicaid.gov and run the ETL pipeline.</>
+          ) : (
+            <>
+              <div>No data found for the selected filters.</div>
+              <div style={{ marginTop: 12 }}>
+                <strong>States with available Medicaid data ({availableStates.length}):</strong>
+                <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center" }}>
+                  {availableStates.map((s) => (
+                    <span key={s} style={{ background: "#1e3a5f", color: "#7dd3fc", padding: "2px 8px", borderRadius: 4, fontSize: 13, fontFamily: "monospace" }}>{s}</span>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -1644,6 +1793,121 @@ function CollaborationTab({ year, state }: { year: string; state: string }) {
 // Hospital Network Tab
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Referral Estimation Section
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REFERRAL_RATES: Record<string, { label: string; rate: number; desc: string }> = {
+  pulmonary:    { label: "Pulmonology",        rate: 22, desc: "Lung, pleural, mediastinal cancers" },
+  gastro:       { label: "Gastroenterology",   rate: 18, desc: "Colorectal, pancreatic, esophageal, gastric" },
+  urology:      { label: "Urology",            rate: 28, desc: "Prostate, bladder, renal cell carcinoma" },
+  gynecology:   { label: "Gynecology",         rate: 20, desc: "Ovarian, cervical, uterine cancers" },
+  dermatology:  { label: "Dermatology",        rate: 12, desc: "Melanoma, squamous/basal cell carcinoma" },
+  neurology:    { label: "Neurology",          rate: 6,  desc: "Brain tumors, CNS malignancies" },
+  nephrology:   { label: "Nephrology",         rate: 5,  desc: "Renal cell carcinoma" },
+  rheumatology: { label: "Rheumatology",       rate: 4,  desc: "Lymphoma, some solid tumors" },
+  internal:     { label: "Internal Medicine",  rate: 10, desc: "Mixed oncology referrals" },
+  family:       { label: "Family Practice",    rate: 6,  desc: "Early detection, mixed referrals" },
+  general:      { label: "General Practice",   rate: 6,  desc: "Screening, early detection" },
+};
+
+function classifyReferrerSpecialty(specialty: string): string {
+  const s = specialty.toUpperCase();
+  if (s.includes("PULMON") || s.includes("LUNG")) return "pulmonary";
+  if (s.includes("GASTRO")) return "gastro";
+  if (s.includes("UROL")) return "urology";
+  if (s.includes("GYNEC") || s.includes("OB-GYN") || s.includes("OB/GYN")) return "gynecology";
+  if (s.includes("DERMAT")) return "dermatology";
+  if (s.includes("NEUROL")) return "neurology";
+  if (s.includes("NEPHROL")) return "nephrology";
+  if (s.includes("RHEUMAT")) return "rheumatology";
+  if (s.includes("INTERNAL MEDICINE")) return "internal";
+  if (s.includes("FAMILY PRACTICE") || s.includes("FAMILY MEDICINE")) return "family";
+  if (s.includes("GENERAL PRACTICE")) return "general";
+  return "internal";
+}
+
+function ReferralEstimationSection({ referrers, oncologistCount }: { referrers: HospitalProvider[]; oncologistCount: number }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Group referrers by specialty category and count
+  const byCategory: Record<string, { label: string; count: number; rate: number; desc: string }> = {};
+  for (const r of referrers) {
+    const cat = classifyReferrerSpecialty(r.specialty);
+    const meta = REFERRAL_RATES[cat] || REFERRAL_RATES.internal;
+    if (!byCategory[cat]) byCategory[cat] = { label: meta.label, count: 0, rate: meta.rate, desc: meta.desc };
+    byCategory[cat].count++;
+  }
+
+  const rows = Object.entries(byCategory).map(([cat, info]) => ({
+    cat, ...info,
+    estimated: info.count * info.rate
+  })).sort((a, b) => b.estimated - a.estimated);
+
+  const totalEstimated = rows.reduce((s, r) => s + r.estimated, 0);
+
+  // Network capture rate: ratio of oncologists to total providers indicating how self-sufficient the network is
+  const captureIndicator = oncologistCount >= 5 ? "High" : oncologistCount >= 2 ? "Moderate" : "Low";
+  const captureColor = oncologistCount >= 5 ? "#22c55e" : oncologistCount >= 2 ? "#f59e0b" : "#ef4444";
+
+  return (
+    <div className="hospital-rx-highlights">
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
+        <h4 style={{ margin: 0 }}>Estimated Annual Oncology Referrals from Network</h4>
+        <button type="button" className="analyzer-btn-outline" style={{ fontSize: "11px", padding: "2px 8px" }}
+          onClick={() => setExpanded(v => !v)}>
+          {expanded ? "Hide details" : "Show breakdown"}
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", marginBottom: expanded ? "12px" : 0 }}>
+        <div className="analyzer-card" style={{ minWidth: 180 }}>
+          <div className="analyzer-card-value">{fmt(totalEstimated)}</div>
+          <div className="analyzer-card-label">Est. Annual Referrals to Oncology</div>
+        </div>
+        <div className="analyzer-card" style={{ minWidth: 180 }}>
+          <div className="analyzer-card-value">{referrers.length}</div>
+          <div className="analyzer-card-label">Inferred Referring Providers</div>
+        </div>
+        <div className="analyzer-card" style={{ minWidth: 180 }}>
+          <div className="analyzer-card-value" style={{ color: captureColor }}>{captureIndicator}</div>
+          <div className="analyzer-card-label">Network Capture Capacity ({oncologistCount} oncologists)</div>
+        </div>
+      </div>
+      {expanded && (
+        <>
+          <div className="analyzer-table-wrap" style={{ marginBottom: "8px" }}>
+            <table className="analyzer-table compact-table">
+              <thead>
+                <tr>
+                  <th>Specialty</th>
+                  <th>Providers in Network</th>
+                  <th>Avg Annual Rate / Provider</th>
+                  <th>Est. Annual Referrals</th>
+                  <th>Cancer Types</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.cat}>
+                    <td><strong>{r.label}</strong></td>
+                    <td className="num">{r.count}</td>
+                    <td className="num">{r.rate} / yr</td>
+                    <td className="num"><strong>{fmt(r.estimated)}</strong></td>
+                    <td className="muted-cell">{r.desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: "11px", color: "#64748b", lineHeight: 1.4 }}>
+            Estimates based on specialty-typical oncology referral rates per provider per year derived from CMS utilization patterns. Actual referral volume depends on practice size, patient demographics, and local care patterns. Network capture capacity reflects whether the oncology team is large enough to absorb intra-network referrals.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function HospitalNetworkTab({ year, state }: { year: string; state: string }) {
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState<HospitalSearchResult[]>([]);
@@ -1853,6 +2117,11 @@ function HospitalNetworkTab({ year, state }: { year: string; state: string }) {
                   </table>
                 </div>
               </div>
+            )}
+
+            {/* Referral Estimation */}
+            {network.providers.referrers.length > 0 && (
+              <ReferralEstimationSection referrers={network.providers.referrers} oncologistCount={network.providers.oncology.length + network.providers.hematology.length} />
             )}
 
             {/* Provider specialty pods */}

@@ -2906,6 +2906,21 @@ app.get("/api/analyzer/open-payments/summary", async (req: Request, res: Respons
   return (res as any).json({ totalRows: rows.length, totalAmount, topKols, byManufacturer, byDrug, byNature });
 });
 
+// GET /api/analyzer/medicaid/states — distinct states that have Medicaid data
+app.get("/api/analyzer/medicaid/states", async (req: Request, res: Response) => {
+  if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);
+
+  const { data, error } = await supabaseAdmin
+    .from("medicaid_drug_utilization")
+    .select("state_code")
+    .order("state_code", { ascending: true });
+
+  if (error) return (res as any).status(500).json({ error: error.message });
+
+  const states = [...new Set((data || []).map((r: any) => r.state_code).filter(Boolean))].sort();
+  return (res as any).json({ states });
+});
+
 // GET /api/analyzer/medicaid
 app.get("/api/analyzer/medicaid", async (req: Request, res: Response) => {
   if (!isSupabaseConfigured || !supabaseAdmin) return analyzerNotAvailable(res as any);

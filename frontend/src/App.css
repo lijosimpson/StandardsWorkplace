@@ -2172,3 +2172,47 @@ button:disabled {
 .collab-detail-section .cancer-type-year {
   font-size: 10px;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PRESCRIBER INLINE DETAIL PANEL
+───────────────────────────────────────────────────────────────────────────── */
+
+.analyzer-row-selected {
+  background: rgba(59, 130, 246, 0.08) !important;
+  outline: 2px solid rgba(59, 130, 246, 0.3);
+  outline-offset: -2px;
+}
+
+.prescriber-detail-panel {
+  margin-top: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #f8faff;
+  overflow: hidden;
+}
+
+.prescriber-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: #e0f2fe;
+  border-bottom: 1px solid #bfdbfe;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1e3a5f;
+}
+
+.prescriber-detail-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.prescriber-detail-section h4 {
+  margin: 0 0 10px 0;
+  font-size: 0.85rem;
+  color: #1e3a5f;
+  font-weight: 600;
+}
