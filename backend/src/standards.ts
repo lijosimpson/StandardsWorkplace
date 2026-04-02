@@ -189,11 +189,6 @@ const manualHospitalProcessByCode: Record<string, string[]> = {
   "9.2": [
     "Document participation in each required special study and store supporting evidence.",
     "Document complete data and supporting submissions for each special study by the established deadline."
-  ],
-  "9.3": [
-    "Identify and document all category-specific requirement variations that apply to the program.",
-    "Confirm and document that category-specific standard modifications were applied across relevant standards.",
-    "Review the CoC glossary with staff and store evidence that terminology aligns with the definitions used by the program."
   ]
 };
 
@@ -1051,6 +1046,7 @@ export const standards: StandardDefinition[] = [
 
 
 ];
+
 
 
 
