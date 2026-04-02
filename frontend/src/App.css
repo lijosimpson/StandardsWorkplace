@@ -2216,3 +2216,46 @@ button:disabled {
   color: #1e3a5f;
   font-weight: 600;
 }
+
+@media (max-width: 900px) {
+  .template-requirements-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.template-requirements-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.template-requirements-subcard,
+.template-workspace-subcard {
+  display: grid;
+  gap: 0.6rem;
+  background: #f8fcff;
+}
+
+.template-workspace-card {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.template-workspace-stack {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.template-workspace-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.template-workspace-heading h4,
+.template-requirements-subcard h4 {
+  margin: 0;
+}
+

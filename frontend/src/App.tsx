@@ -1833,184 +1833,224 @@ function App() {
               </div>
 
               <div className="detail-grid">
-                <article className="section-card full-width-card standard-start-card">
-                  <h3>Start Here: Create Working Template</h3>
-                  <p className="muted">{buildEvidenceUploadGuidance(detail.standard.code)}</p>
-                  <div className="button-row">
-                    <button type="button" disabled={role === "auditor"} onClick={startStandardEvidenceTemplate}>
-                      {standardEvidenceDraft ? "Reset Standard Template" : "Start New Standard Template"}
-                    </button>
-                    <button type="button" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceDraft}>Save Draft</button>
-                    <button type="button" disabled={!standardEvidenceSavedDraft} onClick={reopenStandardEvidenceDraft}>Edit Saved Draft</button>
-                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "doc")}>Download .doc</button>
-                    <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx")}>Download .docx</button>
-                    <button type="button" className="primary" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceTemplate}>Save To Standard Files</button>
-                    <button
-                      type="button"
-                      disabled={!standardEvidenceSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft?.id || "" }))}
-                      onClick={() => standardEvidenceSavedDraft && queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(standardEvidenceSavedDraft))}
-                    >
-                      {standardEvidenceSavedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix"}
-                    </button>
-                    <button type="button" disabled={!standardEvidenceSavedDraft || role === "auditor"} onClick={() => standardEvidenceSavedDraft && deleteSavedTemplateDraft(standardEvidenceSavedDraft)}>Delete Saved Draft</button>
-                  </div>
-                  <p className="muted">{formatSavedDraftNote(standardEvidenceSavedDraft)}</p>
-                  {renderTemplateDraftHistory(standardEvidenceSavedDraft)}
-                  {standardEvidenceDraft && (
-                    <div className="template-editor-panel">
-                      <input
-                        value={standardEvidenceDraft.title}
-                        disabled={role === "auditor"}
-                        onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, title: e.target.value } : prev)}
-                      />
-                      <textarea
-                        className="template-editor template-editor-compact"
-                        value={standardEvidenceDraft.body}
-                        disabled={role === "auditor"}
-                        onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, body: e.target.value } : prev)}
-                      />
-                    </div>
-                  )}
-                </article>
-
                 <article className="section-card full-width-card">
-                  <h3>Template Coverage</h3>
-                  <p className="muted">Saved draft coverage for this standard: {detail.templateCoverage.savedDraftCount}/{detail.templateCoverage.expectedDraftCount} required templates.</p>
-                  <div className="list-compact">
-                    {detail.templateCoverage.items.map((item) => (
-                      <div key={`${item.kind}-${item.processIndex ?? "core"}`} className="audit-item">
-                        <div className="audit-row"><strong>{item.label}</strong><span>{item.hasSavedDraft ? "Draft saved" : "Draft missing"}</span></div>
+                  <h3>Template Requirements</h3>
+                  <p className="muted">{buildEvidenceUploadGuidance(detail.standard.code)}</p>
+                  <p className="muted">Review the required templates and hospital steps here, then use the workspace below as the single place to create, edit, delete, save, and download standard documents.</p>
+                  <div className="template-requirements-grid">
+                    <div className="section-card template-requirements-subcard">
+                      <h4>Required Templates</h4>
+                      <p className="muted">Saved draft coverage for this standard: {detail.templateCoverage.savedDraftCount}/{detail.templateCoverage.expectedDraftCount} required templates.</p>
+                      <div className="list-compact">
+                        {detail.templateCoverage.items.map((item) => (
+                          <div key={`${item.kind}-${item.processIndex ?? "core"}`} className="audit-item">
+                            <div className="audit-row"><strong>{item.label}</strong><span>{item.hasSavedDraft ? "Draft saved" : "Draft missing"}</span></div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+                    <div className="section-card template-requirements-subcard">
+                      <h4>Hospital Steps</h4>
+                      <div className="list-compact">
+                        {detail.standard.hospitalProcess.map((step, idx) => {
+                          const key = String(idx);
+                          const hidden = !!detail.state.processHiddenSteps?.[key];
+                          const displayedStepLabel = getDisplayedProcessStepLabel(step, idx);
+                          const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                          const quarterChecks = detail.state.processQuarterChecks?.[key] || {};
+                          const completedQuarterCount = Object.values(quarterChecks).filter(Boolean).length;
+                          return (
+                            <div key={idx} className="audit-item">
+                              <div className="audit-row"><strong>Step {idx + 1}: {displayedStepLabel}</strong><span>{hidden ? "Not required" : savedDraft ? "Draft saved" : "Needs document"}</span></div>
+                              <div className="muted">{hidden ? "This step is currently marked not required for this hospital." : completedQuarterCount > 0 ? `${completedQuarterCount} quarter${completedQuarterCount === 1 ? "" : "s"} marked complete` : "No quarters marked complete yet."}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </article>
 
-                <article className="section-card full-width-card" ref={processSectionRef as React.RefObject<HTMLElement>}>
-                  <h3>Hospital Process</h3>
-                  <p className="muted">Start by uploading your current tracking document above. Then mark required steps by quarter, store supporting documents, and let admins mark any step as not required for this hospital.</p>
-                  <div className="process-steps-list">
-                    {detail.standard.hospitalProcess.map((step, idx) => {
-                      const key = String(idx);
-                      const hidden = !!detail.state.processHiddenSteps?.[key];
-                      const qChecks = detail.state.processQuarterChecks?.[key] || {};
-                      const stepDocs = (detail.processDocuments || []).filter((d) => d.processIndex === idx);
-                      const _pendingFile = processDocFiles[idx];
-                      const displayedStepLabel = getDisplayedProcessStepLabel(step, idx);
-                      return (
-                        <div key={idx} className={`process-step-card ${hidden ? "process-step-hidden" : ""}`}>
-                          <div className="process-step-header">
-                            <span className="process-step-num">Step {idx + 1}</span>
-                            <div className="process-step-title-block">
-                              <span className="process-step-text">{displayedStepLabel}</span>
-                              {hidden && <span className="process-step-flag">Not Required</span>}
-                              {displayedStepLabel !== step && <div className="muted">Guidance: {step}</div>}
-                            </div>
-                          </div>
-                          <p className="muted process-admin-note">
-                            {hidden
-                              ? "Marked not required for this hospital. Restore the requirement at any time and the previous quarter checks and supporting documents will still be available."
-                              : "Program users can mark completed quarters, store supporting documents, or mark this step as not required for this hospital."}
-                          </p>
-                          <div className="button-row process-step-actions">
-                            {role !== "auditor" && (
-                              <button
-                                type="button"
-                                className={hidden ? "primary" : undefined}
-                                onClick={() => updateProcessVisibility(idx, !hidden)}
-                              >
-                                {hidden ? "Restore Requirement" : "Mark Not Required"}
-                              </button>
-                            )}
-                          </div>
-                          {hidden ? null : (
-                            <>
-                              <div className="quarter-checks">
-                                {(["Q1", "Q2", "Q3", "Q4"] as const).map((q) => (
-                                  <label key={q} className={`quarter-label ${qChecks[q] ? "quarter-done" : ""}`}>
-                                    <input
-                                      type="checkbox"
-                                      checked={!!qChecks[q]}
-                                      disabled={role === "auditor"}
-                                      onChange={(e) => updateProcessQuarter(idx, q, e.target.checked)}
-                                    />
-                                    {q}
-                                  </label>
-                                ))}
-                                <span className="muted" style={{ fontSize: "0.75rem" }}>Quarter completion tracking</span>
-                              </div>
-                              <div className="process-doc-upload process-template-actions">
-                                <button type="button" disabled={role === "auditor"} onClick={() => startProcessTemplateDraft(idx, displayedStepLabel)}>
-                                  {processTemplateDrafts[idx] ? "Reset Step Template" : "Start New Step Template"}
-                                </button>
-                                <button type="button" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateEditor(idx)}>Save Draft</button>
-                                <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx)} onClick={() => reopenProcessTemplateDraft(idx)}>Edit Saved Draft</button>
-                                <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "doc")}>Download .doc</button>
-                                <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "docx")}>Download .docx</button>
-                                <button type="button" className="primary" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateDraft(idx)}>Save Step Document</button>
-                                <button
-                                  type="button"
-                                  disabled={!findSavedTemplateDraft(detail, "process-step", idx) || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: findSavedTemplateDraft(detail, "process-step", idx)?.id || "" }))}
-                                  onClick={() => {
-                                    const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
-                                    if (savedDraft) queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(savedDraft));
-                                  }}
-                                >
-                                  {(() => {
-                                    const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
-                                    return savedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: savedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix";
-                                  })()}
-                                </button>
-                                <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx) || role === "auditor"} onClick={() => {
-                                  const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
-                                  if (savedDraft) void deleteSavedTemplateDraft(savedDraft);
-                                }}>Delete Saved Draft</button>
-                              </div>
-                              <p className="muted">{formatSavedDraftNote(findSavedTemplateDraft(detail, "process-step", idx))}</p>
-                              {renderTemplateDraftHistory(findSavedTemplateDraft(detail, "process-step", idx))}
-                              {processTemplateDrafts[idx] && (
-                                <div className="template-editor-panel template-editor-panel-step">
-                                  <input
-                                    value={processTemplateDrafts[idx].title}
-                                    disabled={role === "auditor"}
-                                    onChange={(e) => setProcessTemplateDrafts((prev) => ({
-                                      ...prev,
-                                      [idx]: { ...prev[idx], title: e.target.value }
-                                    }))}
-                                  />
-                                  <textarea
-                                    className="template-editor template-editor-compact"
-                                    value={processTemplateDrafts[idx].body}
-                                    disabled={role === "auditor"}
-                                    onChange={(e) => setProcessTemplateDrafts((prev) => ({
-                                      ...prev,
-                                      [idx]: { ...prev[idx], body: e.target.value }
-                                    }))}
-                                  />
+                <article className="section-card full-width-card template-workspace-card" ref={processSectionRef as React.RefObject<HTMLElement>}>
+                  <h3>Template Workspace</h3>
+                  <p className="muted">This is the single workspace for standard and step templates. Create, edit, delete, save, download, and route documents to committee minutes from here.</p>
+                  <div className="template-workspace-stack">
+                    <div className="section-card template-workspace-subcard">
+                      <div className="template-workspace-heading">
+                        <div>
+                          <h4>Standard Working Template</h4>
+                          <p className="muted">Build the main working evidence document for this standard here.</p>
+                        </div>
+                      </div>
+                      <div className="button-row">
+                        <button type="button" disabled={role === "auditor"} onClick={startStandardEvidenceTemplate}>
+                          {standardEvidenceDraft ? "Reset Standard Template" : "Start New Standard Template"}
+                        </button>
+                        <button type="button" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceDraft}>Save Draft</button>
+                        <button type="button" disabled={!standardEvidenceSavedDraft} onClick={reopenStandardEvidenceDraft}>Edit Saved Draft</button>
+                        <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "doc")}>Download .doc</button>
+                        <button type="button" disabled={!standardEvidenceDraft} onClick={() => standardEvidenceDraft && downloadTemplateDraft(standardEvidenceDraft.title, standardEvidenceDraft.body, "docx")}>Download .docx</button>
+                        <button type="button" className="primary" disabled={!standardEvidenceDraft || role === "auditor"} onClick={saveStandardEvidenceTemplate}>Save To Standard Files</button>
+                        <button
+                          type="button"
+                          disabled={!standardEvidenceSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft?.id || "" }))}
+                          onClick={() => standardEvidenceSavedDraft && queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(standardEvidenceSavedDraft))}
+                        >
+                          {standardEvidenceSavedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: standardEvidenceSavedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix"}
+                        </button>
+                        <button type="button" disabled={!standardEvidenceSavedDraft || role === "auditor"} onClick={() => standardEvidenceSavedDraft && deleteSavedTemplateDraft(standardEvidenceSavedDraft)}>Delete Saved Draft</button>
+                      </div>
+                      <p className="muted">{formatSavedDraftNote(standardEvidenceSavedDraft)}</p>
+                      {renderTemplateDraftHistory(standardEvidenceSavedDraft)}
+                      {standardEvidenceDraft && (
+                        <div className="template-editor-panel">
+                          <input
+                            value={standardEvidenceDraft.title}
+                            disabled={role === "auditor"}
+                            onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, title: e.target.value } : prev)}
+                          />
+                          <textarea
+                            className="template-editor template-editor-compact"
+                            value={standardEvidenceDraft.body}
+                            disabled={role === "auditor"}
+                            onChange={(e) => setStandardEvidenceDraft((prev) => prev ? { ...prev, body: e.target.value } : prev)}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="section-card template-workspace-subcard">
+                      <div className="template-workspace-heading">
+                        <div>
+                          <h4>Hospital Process Steps And Step Documents</h4>
+                          <p className="muted">Use the same workspace to manage each required step, save step-specific drafts, and keep supporting process documents together.</p>
+                        </div>
+                      </div>
+                      <div className="process-steps-list">
+                        {detail.standard.hospitalProcess.map((step, idx) => {
+                          const key = String(idx);
+                          const hidden = !!detail.state.processHiddenSteps?.[key];
+                          const qChecks = detail.state.processQuarterChecks?.[key] || {};
+                          const stepDocs = (detail.processDocuments || []).filter((d) => d.processIndex === idx);
+                          const _pendingFile = processDocFiles[idx];
+                          const displayedStepLabel = getDisplayedProcessStepLabel(step, idx);
+                          return (
+                            <div key={idx} className={`process-step-card ${hidden ? "process-step-hidden" : ""}`}>
+                              <div className="process-step-header">
+                                <span className="process-step-num">Step {idx + 1}</span>
+                                <div className="process-step-title-block">
+                                  <span className="process-step-text">{displayedStepLabel}</span>
+                                  {hidden && <span className="process-step-flag">Not Required</span>}
+                                  {displayedStepLabel !== step && <div className="muted">Guidance: {step}</div>}
                                 </div>
-                              )}
-                            </>
-                          )}
-                          {stepDocs.length > 0 && (
-                            <div className="process-doc-list">
-                              {stepDocs.map((doc) => (
-                                <div key={doc.id} className="process-doc-item">
-                                  <a href={`http://localhost:4000${doc.filePath}`} target="_blank" rel="noreferrer">{doc.originalName}</a>
-                                  <span className="muted">{Math.round(doc.sizeBytes / 1024)} KB  {doc.uploadedBy}</span>
+                              </div>
+                              <p className="muted process-admin-note">
+                                {hidden
+                                  ? "Marked not required for this hospital. Restore the requirement at any time and the previous quarter checks and supporting documents will still be available."
+                                  : "Program users can mark completed quarters, store supporting documents, or mark this step as not required for this hospital."}
+                              </p>
+                              <div className="button-row process-step-actions">
+                                {role !== "auditor" && (
                                   <button
                                     type="button"
-                                    disabled={role === "auditor" || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "process-document", sourceId: doc.id }))}
-                                    onClick={() => queueStandardMinutesAppendix(createCommitteeAppendixDraft(doc, "process-document"))}
+                                    className={hidden ? "primary" : undefined}
+                                    onClick={() => updateProcessVisibility(idx, !hidden)}
                                   >
-                                    {standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "process-document", sourceId: doc.id })) ? "Added To Minutes" : "Add As Appendix"}
+                                    {hidden ? "Restore Requirement" : "Mark Not Required"}
                                   </button>
-                                  <button className="btn-danger-sm" disabled={role === "auditor"} onClick={() => deleteProcessDoc(doc)}>Remove</button>
+                                )}
+                              </div>
+                              {hidden ? null : (
+                                <>
+                                  <div className="quarter-checks">
+                                    {(["Q1", "Q2", "Q3", "Q4"] as const).map((q) => (
+                                      <label key={q} className={`quarter-label ${qChecks[q] ? "quarter-done" : ""}`}>
+                                        <input
+                                          type="checkbox"
+                                          checked={!!qChecks[q]}
+                                          disabled={role === "auditor"}
+                                          onChange={(e) => updateProcessQuarter(idx, q, e.target.checked)}
+                                        />
+                                        {q}
+                                      </label>
+                                    ))}
+                                    <span className="muted" style={{ fontSize: "0.75rem" }}>Quarter completion tracking</span>
+                                  </div>
+                                  <div className="process-doc-upload process-template-actions">
+                                    <button type="button" disabled={role === "auditor"} onClick={() => startProcessTemplateDraft(idx, displayedStepLabel)}>
+                                      {processTemplateDrafts[idx] ? "Reset Step Template" : "Start New Step Template"}
+                                    </button>
+                                    <button type="button" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateEditor(idx)}>Save Draft</button>
+                                    <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx)} onClick={() => reopenProcessTemplateDraft(idx)}>Edit Saved Draft</button>
+                                    <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "doc")}>Download .doc</button>
+                                    <button type="button" disabled={!processTemplateDrafts[idx]} onClick={() => processTemplateDrafts[idx] && downloadTemplateDraft(processTemplateDrafts[idx].title, processTemplateDrafts[idx].body, "docx")}>Download .docx</button>
+                                    <button type="button" className="primary" disabled={!processTemplateDrafts[idx] || role === "auditor"} onClick={() => saveProcessTemplateDraft(idx)}>Save Step Document</button>
+                                    <button
+                                      type="button"
+                                      disabled={!findSavedTemplateDraft(detail, "process-step", idx) || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: findSavedTemplateDraft(detail, "process-step", idx)?.id || "" }))}
+                                      onClick={() => {
+                                        const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                        if (savedDraft) queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(savedDraft));
+                                      }}
+                                    >
+                                      {(() => {
+                                        const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                        return savedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: savedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix";
+                                      })()}
+                                    </button>
+                                    <button type="button" disabled={!findSavedTemplateDraft(detail, "process-step", idx) || role === "auditor"} onClick={() => {
+                                      const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
+                                      if (savedDraft) void deleteSavedTemplateDraft(savedDraft);
+                                    }}>Delete Saved Draft</button>
+                                  </div>
+                                  <p className="muted">{formatSavedDraftNote(findSavedTemplateDraft(detail, "process-step", idx))}</p>
+                                  {renderTemplateDraftHistory(findSavedTemplateDraft(detail, "process-step", idx))}
+                                  {processTemplateDrafts[idx] && (
+                                    <div className="template-editor-panel template-editor-panel-step">
+                                      <input
+                                        value={processTemplateDrafts[idx].title}
+                                        disabled={role === "auditor"}
+                                        onChange={(e) => setProcessTemplateDrafts((prev) => ({
+                                          ...prev,
+                                          [idx]: { ...prev[idx], title: e.target.value }
+                                        }))}
+                                      />
+                                      <textarea
+                                        className="template-editor template-editor-compact"
+                                        value={processTemplateDrafts[idx].body}
+                                        disabled={role === "auditor"}
+                                        onChange={(e) => setProcessTemplateDrafts((prev) => ({
+                                          ...prev,
+                                          [idx]: { ...prev[idx], body: e.target.value }
+                                        }))}
+                                      />
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                              {stepDocs.length > 0 && (
+                                <div className="process-doc-list">
+                                  {stepDocs.map((doc) => (
+                                    <div key={doc.id} className="process-doc-item">
+                                      <a href={`http://localhost:4000${doc.filePath}`} target="_blank" rel="noreferrer">{doc.originalName}</a>
+                                      <span className="muted">{Math.round(doc.sizeBytes / 1024)} KB  {doc.uploadedBy}</span>
+                                      <button
+                                        type="button"
+                                        disabled={role === "auditor" || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "process-document", sourceId: doc.id }))}
+                                        onClick={() => queueStandardMinutesAppendix(createCommitteeAppendixDraft(doc, "process-document"))}
+                                      >
+                                        {standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "process-document", sourceId: doc.id })) ? "Added To Minutes" : "Add As Appendix"}
+                                      </button>
+                                      <button className="btn-danger-sm" disabled={role === "auditor"} onClick={() => deleteProcessDoc(doc)}>Remove</button>
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
+                              )}
                             </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </article>
 
@@ -2732,6 +2772,8 @@ function App() {
 }
 
 export default App;
+
+
 
 
 
