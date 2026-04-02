@@ -1854,7 +1854,7 @@ function App() {
 
                 <article className="section-card full-width-card template-workspace-card" ref={processSectionRef as React.RefObject<HTMLElement>}>
                   <h3>Template Workspace</h3>
-                  <p className="muted">This is the single workspace for standard and step templates. Create, edit, delete, save, download, and route documents to committee minutes from here.</p>
+                  <p className="muted">This is the single workspace for standard, appendix, and step templates. Create, edit, delete, save, download, and route documents to committee minutes from here.</p>
                   <div className="template-workspace-stack">
                     <div className="section-card template-workspace-subcard">
                       <div className="template-workspace-heading">
@@ -1898,6 +1898,47 @@ function App() {
                           />
                         </div>
                       )}
+                    </div>
+
+                    <div className="section-card template-workspace-subcard">
+                      <div className="template-workspace-heading">
+                        <div>
+                          <h4>Committee Appendix Template</h4>
+                          <p className="muted">Build the appendix draft for this standard here, then save it as a draft or Word file and optionally route it into committee minutes.</p>
+                        </div>
+                      </div>
+                      <div className="template-editor-panel">
+                        <input
+                          placeholder="Appendix title"
+                          value={appendixTemplateTitle}
+                          disabled={role === "auditor"}
+                          onChange={(e) => setAppendixTemplateTitle(e.target.value)}
+                        />
+                        <div className="button-row">
+                          <button type="button" onClick={rebuildStandardAppendixTemplate}>Rebuild Template</button>
+                          <button type="button" disabled={role === "auditor"} onClick={saveCommitteeAppendixDraft}>Save Draft</button>
+                          <button type="button" disabled={!committeeAppendixSavedDraft} onClick={reopenCommitteeAppendixDraft}>Edit Saved Draft</button>
+                          <button
+                            type="button"
+                            disabled={!committeeAppendixSavedDraft || standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: committeeAppendixSavedDraft?.id || "" }))}
+                            onClick={() => committeeAppendixSavedDraft && queueStandardMinutesAppendix(createTemplateDraftAppendixDraft(committeeAppendixSavedDraft))}
+                          >
+                            {committeeAppendixSavedDraft && standardMinutesAppendixKeys.has(buildCommitteeAppendixKey({ sourceType: "template-draft", sourceId: committeeAppendixSavedDraft.id })) ? "Added To Minutes" : "Add Saved Draft As Appendix"}
+                          </button>
+                          <button type="button" disabled={!committeeAppendixSavedDraft || role === "auditor"} onClick={() => committeeAppendixSavedDraft && deleteSavedTemplateDraft(committeeAppendixSavedDraft)}>Delete Saved Draft</button>
+                          <button type="button" disabled={role === "auditor"} onClick={() => saveStandardAppendixTemplate(false)}>Save Word File</button>
+                          <button type="button" className="primary" disabled={role === "auditor"} onClick={() => saveStandardAppendixTemplate(true)}>Save Word File + Add To Minutes</button>
+                        </div>
+                        <p className="muted">{formatSavedDraftNote(committeeAppendixSavedDraft)}</p>
+                        {renderTemplateDraftHistory(committeeAppendixSavedDraft)}
+                        <textarea
+                          className="template-editor"
+                          placeholder="Editable appendix template"
+                          value={appendixTemplateBody}
+                          disabled={role === "auditor"}
+                          onChange={(e) => setAppendixTemplateBody(e.target.value)}
+                        />
+                      </div>
                     </div>
 
                     <div className="section-card template-workspace-subcard">
@@ -2753,6 +2794,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
