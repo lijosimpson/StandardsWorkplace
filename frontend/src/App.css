@@ -590,7 +590,7 @@ button:disabled {
 
 .auditor-doc-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.75rem;
 }
 
@@ -967,7 +967,7 @@ button:disabled {
 .ops-form,
 .quality-source-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.55rem;
 }
 
@@ -997,7 +997,7 @@ button:disabled {
 
 .ops-summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.55rem;
 }
 
@@ -1088,7 +1088,7 @@ button:disabled {
 
 .roster-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.85rem;
   margin-bottom: 0.85rem;
 }
@@ -2225,7 +2225,7 @@ button:disabled {
 
 .template-requirements-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.75rem;
   margin-top: 0.75rem;
 }
@@ -2258,4 +2258,5 @@ button:disabled {
 .template-requirements-subcard h4 {
   margin: 0;
 }
+
 

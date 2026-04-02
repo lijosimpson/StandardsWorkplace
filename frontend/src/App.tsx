@@ -1836,7 +1836,7 @@ function App() {
                 <article className="section-card full-width-card">
                   <h3>Template Requirements</h3>
                   <p className="muted">{buildEvidenceUploadGuidance(detail.standard.code)}</p>
-                  <p className="muted">Review the required templates and hospital steps here, then use the workspace below as the single place to create, edit, delete, save, and download standard documents.</p>
+                  <p className="muted">Review the required templates here, then use the workspace below as the single place to create, edit, delete, save, and download standard documents.</p>
                   <div className="template-requirements-grid">
                     <div className="section-card template-requirements-subcard">
                       <h4>Required Templates</h4>
@@ -1847,25 +1847,6 @@ function App() {
                             <div className="audit-row"><strong>{item.label}</strong><span>{item.hasSavedDraft ? "Draft saved" : "Draft missing"}</span></div>
                           </div>
                         ))}
-                      </div>
-                    </div>
-                    <div className="section-card template-requirements-subcard">
-                      <h4>Hospital Steps</h4>
-                      <div className="list-compact">
-                        {detail.standard.hospitalProcess.map((step, idx) => {
-                          const key = String(idx);
-                          const hidden = !!detail.state.processHiddenSteps?.[key];
-                          const displayedStepLabel = getDisplayedProcessStepLabel(step, idx);
-                          const savedDraft = findSavedTemplateDraft(detail, "process-step", idx);
-                          const quarterChecks = detail.state.processQuarterChecks?.[key] || {};
-                          const completedQuarterCount = Object.values(quarterChecks).filter(Boolean).length;
-                          return (
-                            <div key={idx} className="audit-item">
-                              <div className="audit-row"><strong>Step {idx + 1}: {displayedStepLabel}</strong><span>{hidden ? "Not required" : savedDraft ? "Draft saved" : "Needs document"}</span></div>
-                              <div className="muted">{hidden ? "This step is currently marked not required for this hospital." : completedQuarterCount > 0 ? `${completedQuarterCount} quarter${completedQuarterCount === 1 ? "" : "s"} marked complete` : "No quarters marked complete yet."}</div>
-                            </div>
-                          );
-                        })}
                       </div>
                     </div>
                   </div>
@@ -2772,6 +2753,7 @@ function App() {
 }
 
 export default App;
+
 
 
 
