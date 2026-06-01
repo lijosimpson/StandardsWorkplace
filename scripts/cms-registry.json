@@ -1,6 +1,6 @@
 {
   "_comment": "Auto-updated by scripts/checkCmsUpdates.js — tracks last-seen CMS dataset modification dates",
-  "_lastChecked": "2026-05-01T09:31:03.100Z",
+  "_lastChecked": "2026-06-01T10:40:44.485Z",
   "datasets": {
     "medicare_partb": {
       "label": "Medicare Part B — Physician/Other Practitioners by Provider & Service",
